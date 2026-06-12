@@ -22,9 +22,11 @@ def main() -> None:
             dt = now - last          # seconds since the previous frame
             last = now
 
-            running = renderer.pump_events()  # sense
-            intent = brain.update(dt)         # think
-            renderer.render(intent)           # draw
+            user = renderer.pump_events()         # sense
+            if user.quit:
+                running = False
+            intent = brain.update(dt, poked=user.poked)  # think
+            renderer.render(intent)                      # draw
     finally:
         renderer.shutdown()
 

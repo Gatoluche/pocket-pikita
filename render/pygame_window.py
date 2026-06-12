@@ -1,10 +1,12 @@
-"""Pygame desktop backend. The only place that deals with sprite files and pixels."""
+"""Pygame desktop backend. The only place that deals with sprite files, sound
+files and pixels."""
 
 from pathlib import Path
 
 import pygame
 
-from pet.intent import PetIntent
+from input.events import FrameInput
+from pet.intent import PetIntent, Sound
 from render.renderer import Renderer
 
 TARGET_HEIGHT = 600
@@ -45,6 +47,14 @@ class PygameWindow(Renderer):
         sprite_w, sprite_h = next(iter(self._sprites.values())).get_size()
         self._screen = pygame.display.set_mode((sprite_w + MARGIN, sprite_h + MARGIN))
         self._clock = pygame.time.Clock()
+        self._last_rect = self._screen.get_rect()  # where the sprite was last drawn
+
+        # Audio. Fall back to silence if there's no usable audio device.
+        try:
+            pygame.mixer.init()
+            self._sounds = {Sound.SQUEAK: pygame.mixer.Sound(str(assets_dir / "Squeak.ogg"))}
+        except pygame.error:
+            self._sounds = {}
 
     def _surface_for(self, intent: PetIntent) -> pygame.Surface:
         # Most specific sprite first, then fall back. Only Base has blink art.
@@ -64,17 +74,26 @@ class PygameWindow(Renderer):
                 return sprite
         return self._sprites[_normalize("Base")]
 
-    def pump_events(self) -> bool:
+    def pump_events(self) -> FrameInput:
+        quit_ = poked = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                return False
-        return True
+                quit_ = True
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self._last_rect.collidepoint(event.pos):
+                    poked = True
+        return FrameInput(quit=quit_, poked=poked)
 
     def render(self, intent: PetIntent) -> None:
+        if intent.sound is not None:
+            sfx = self._sounds.get(intent.sound)
+            if sfx is not None:
+                sfx.play()
+
         sprite = self._surface_for(intent)
         self._screen.fill(BACKGROUND_COLOR)
-        rect = sprite.get_rect(center=self._screen.get_rect().center)
-        self._screen.blit(sprite, rect)
+        self._last_rect = sprite.get_rect(center=self._screen.get_rect().center)
+        self._screen.blit(sprite, self._last_rect)
         pygame.display.flip()
         self._clock.tick(FPS)
 

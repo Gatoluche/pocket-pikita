@@ -2,13 +2,14 @@
 
 from abc import ABC, abstractmethod
 
+from input.events import FrameInput
 from pet.intent import PetIntent
 
 
 class Renderer(ABC):
     @abstractmethod
-    def pump_events(self) -> bool:
-        # Handle window/OS events. Return False when it's time to quit.
+    def pump_events(self) -> FrameInput:
+        # Read window/OS events and report what the user did this frame.
         ...
 
     @abstractmethod
