@@ -1,5 +1,6 @@
 """Entry point. Run with: python main.py"""
 
+import time
 from pathlib import Path
 
 from pet.brain import Brain
@@ -15,9 +16,14 @@ def main() -> None:
 
     try:
         running = True
+        last = time.monotonic()
         while running:
+            now = time.monotonic()
+            dt = now - last          # seconds since the previous frame
+            last = now
+
             running = renderer.pump_events()  # sense
-            intent = brain.update()           # think
+            intent = brain.update(dt)         # think
             renderer.render(intent)           # draw
     finally:
         renderer.shutdown()
