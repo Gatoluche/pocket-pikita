@@ -605,10 +605,11 @@ class OpenGLWindow(Renderer):
         """Lift the captured desktop icon to Pikita's mouth, then shrink it away."""
         if self._eating_icon is None:
             return
-        progress = min(1.0, (time.monotonic() - self._eating_started) / 1.15)
+        progress = min(1.0, (time.monotonic() - self._eating_started) / 2.0)
         mouth_x = sprite_left + sprite_width * 0.51
         mouth_y = sprite_top + sprite_height * 0.57
-        size = max(4, round(48 * (1.0 - max(0.0, progress - 0.62) / 0.38)))
+        # Keep a real desktop icon readable at his mouth before he swallows it.
+        size = max(4, round(88 * (1.0 - max(0.0, progress - 0.68) / 0.32)))
         icon = pygame.transform.smoothscale(self._eating_icon.image, (size, size))
         # smoothscale drops a source colorkey, which otherwise resurrects the
         # captured desktop background as an opaque black rectangle.
