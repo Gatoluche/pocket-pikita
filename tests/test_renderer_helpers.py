@@ -46,6 +46,9 @@ class RendererHelperTests(unittest.TestCase):
     def test_perspective_keeps_the_original_size_at_screen_middle(self):
         self.assertEqual(_perspective_scale(720, 0, 1440), 1.0)
 
+    def test_perspective_halves_pikita_when_his_hair_touches_screen_top(self):
+        self.assertEqual(_perspective_scale(0, 0, 1440), 0.5)
+
     def test_jump_motion_leaves_the_ground_mid_jump(self):
         _, bob, width, height = _jump_motion(0.5)
         self.assertLess(bob, 0.0)

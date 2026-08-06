@@ -106,13 +106,13 @@ def _walk_speed_scale(seconds: float) -> float:
     return 0.45 + 0.55 * abs(math.sin(seconds * 11.0))
 
 
-def _perspective_scale(feet_y: int, monitor_top: int, monitor_bottom: int) -> float:
-    """Map Pikita's feet to depth, with his original size at screen center."""
+def _perspective_scale(sprite_top: int, monitor_top: int, monitor_bottom: int) -> float:
+    """Map Pikita's visible top to depth, with his original size at screen center."""
     midpoint = (monitor_top + monitor_bottom) / 2
     half_height = max((monitor_bottom - monitor_top) / 2, 1)
-    depth = max(-1.0, min(1.0, (feet_y - midpoint) / half_height))
-    # Background is about half-size; foreground becomes visually dominant.
-    return 1.0 + 0.55 * depth
+    depth = max(-1.0, min(1.0, (sprite_top - midpoint) / half_height))
+    # Background is exactly half-size; foreground becomes visually dominant.
+    return 1.0 + (0.50 if depth < 0 else 0.55) * depth
 
 
 def _jump_motion(progress: float) -> tuple[float, float, float, float]:
@@ -512,26 +512,25 @@ class OpenGLWindow(Renderer):
         self._layered_dc = self._layered_bitmap = self._layered_previous = self._layered_bits = None
 
     def _update_overlay_scale(self) -> None:
-        """Resize the alpha canvas around Pikita's feet as he changes depth."""
+        """Resize the alpha canvas from Pikita's visible top as he changes depth."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        monitor = self._monitor_for_feet(window, self._monitor_rects())
+        monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
         if monitor is None:
             return
-        scale = _perspective_scale(window.bottom, monitor.top, monitor.bottom)
+        scale = _perspective_scale(window.top, monitor.top, monitor.bottom)
         width = round(self._width * scale)
         height = round(self._height * scale)
         if width == self._overlay_width and height == self._overlay_height:
             return
         center_x = (window.left + window.right) / 2
-        bottom = window.bottom
         self._destroy_layered_buffer()
         self._overlay_width, self._overlay_height = width, height
         self._user.SetWindowPos(
             self._hwnd,
             0,
             round(center_x - width / 2),
-            bottom - height,
+            window.top,
             width,
             height,
             0x4,
@@ -542,9 +541,9 @@ class OpenGLWindow(Renderer):
         """Place the sprite on a shared ground line for normal and alpha rendering."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        monitor = self._monitor_for_feet(window, self._monitor_rects())
+        monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
         perspective = (
-            _perspective_scale(window.bottom, monitor.top, monitor.bottom)
+            _perspective_scale(window.top, monitor.top, monitor.bottom)
             if monitor is not None
             else 1.0
         )
@@ -917,22 +916,22 @@ class OpenGLWindow(Renderer):
         return None
 
     @staticmethod
-    def _monitor_for_feet(window: _Rect, monitors: list[_Rect]) -> _Rect | None:
-        """Find the active display from the ground contact point, even in flight."""
-        feet_x = (window.left + window.right) / 2
-        feet_y = window.bottom
+    def _monitor_for_sprite_top(window: _Rect, monitors: list[_Rect]) -> _Rect | None:
+        """Find the active display from Pikita's visible top, even in flight."""
+        anchor_x = (window.left + window.right) / 2
+        anchor_y = window.top
         for monitor in monitors:
-            if monitor.left <= feet_x < monitor.right and monitor.top <= feet_y < monitor.bottom:
+            if monitor.left <= anchor_x < monitor.right and monitor.top <= anchor_y < monitor.bottom:
                 return monitor
-        # A jump arc can briefly put his feet between displays. Pick the closest
+        # A jump arc can briefly put his top between displays. Pick the closest
         # monitor so perspective continues changing instead of freezing.
         if not monitors:
             return None
         return min(
             monitors,
             key=lambda monitor: (
-                max(monitor.left - feet_x, 0, feet_x - monitor.right) ** 2
-                + max(monitor.top - feet_y, 0, feet_y - monitor.bottom) ** 2
+                max(monitor.left - anchor_x, 0, anchor_x - monitor.right) ** 2
+                + max(monitor.top - anchor_y, 0, anchor_y - monitor.bottom) ** 2
             ),
         )
 
