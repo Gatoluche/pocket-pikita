@@ -106,12 +106,13 @@ def _walk_speed_scale(seconds: float) -> float:
     return 0.45 + 0.55 * abs(math.sin(seconds * 11.0))
 
 
-def _perspective_scale(window_bottom: int, monitor_top: int, monitor_bottom: int) -> float:
-    """Map vertical position to depth: higher on a display means farther away."""
-    depth = (window_bottom - monitor_top) / max(monitor_bottom - monitor_top, 1)
-    # Half-size at the horizon (one quarter the area), current size in the
-    # middle, and large enough to own the foreground near the bottom.
-    return 0.50 + 1.05 * max(0.0, min(1.0, depth))
+def _perspective_scale(feet_y: int, monitor_top: int, monitor_bottom: int) -> float:
+    """Map Pikita's feet to depth, with his original size at screen center."""
+    midpoint = (monitor_top + monitor_bottom) / 2
+    half_height = max((monitor_bottom - monitor_top) / 2, 1)
+    depth = max(-1.0, min(1.0, (feet_y - midpoint) / half_height))
+    # Background is about half-size; foreground becomes visually dominant.
+    return 1.0 + 0.55 * depth
 
 
 def _jump_motion(progress: float) -> tuple[float, float, float, float]:
@@ -514,13 +515,13 @@ class OpenGLWindow(Renderer):
         """Resize the alpha canvas around Pikita's feet as he changes depth."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        monitor = self._monitor_for_window(window, self._monitor_rects())
+        monitor = self._monitor_for_feet(window, self._monitor_rects())
         if monitor is None:
             return
         scale = _perspective_scale(window.bottom, monitor.top, monitor.bottom)
         width = round(self._width * scale)
         height = round(self._height * scale)
-        if abs(width - self._overlay_width) < 8 and abs(height - self._overlay_height) < 8:
+        if width == self._overlay_width and height == self._overlay_height:
             return
         center_x = (window.left + window.right) / 2
         bottom = window.bottom
@@ -541,7 +542,7 @@ class OpenGLWindow(Renderer):
         """Place the sprite on a shared ground line for normal and alpha rendering."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        monitor = self._monitor_for_window(window, self._monitor_rects())
+        monitor = self._monitor_for_feet(window, self._monitor_rects())
         perspective = (
             _perspective_scale(window.bottom, monitor.top, monitor.bottom)
             if monitor is not None
@@ -914,6 +915,26 @@ class OpenGLWindow(Renderer):
             if monitor.left <= center_x < monitor.right and monitor.top <= center_y < monitor.bottom:
                 return monitor
         return None
+
+    @staticmethod
+    def _monitor_for_feet(window: _Rect, monitors: list[_Rect]) -> _Rect | None:
+        """Find the active display from the ground contact point, even in flight."""
+        feet_x = (window.left + window.right) / 2
+        feet_y = window.bottom
+        for monitor in monitors:
+            if monitor.left <= feet_x < monitor.right and monitor.top <= feet_y < monitor.bottom:
+                return monitor
+        # A jump arc can briefly put his feet between displays. Pick the closest
+        # monitor so perspective continues changing instead of freezing.
+        if not monitors:
+            return None
+        return min(
+            monitors,
+            key=lambda monitor: (
+                max(monitor.left - feet_x, 0, feet_x - monitor.right) ** 2
+                + max(monitor.top - feet_y, 0, feet_y - monitor.bottom) ** 2
+            ),
+        )
 
     def _try_begin_screen_jump(
         self, window: _Rect, monitor: _Rect, monitors: list[_Rect]

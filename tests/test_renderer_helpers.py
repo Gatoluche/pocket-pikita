@@ -43,6 +43,9 @@ class RendererHelperTests(unittest.TestCase):
     def test_perspective_makes_the_top_of_a_screen_feel_farther_away(self):
         self.assertLess(_perspective_scale(600, 0, 1440), _perspective_scale(1400, 0, 1440))
 
+    def test_perspective_keeps_the_original_size_at_screen_middle(self):
+        self.assertEqual(_perspective_scale(720, 0, 1440), 1.0)
+
     def test_jump_motion_leaves_the_ground_mid_jump(self):
         _, bob, width, height = _jump_motion(0.5)
         self.assertLess(bob, 0.0)
