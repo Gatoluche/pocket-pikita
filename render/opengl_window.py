@@ -598,9 +598,9 @@ class OpenGLWindow(Renderer):
         self._user.SetWindowPos(self._hwnd, 0, next_x, window.top, 0, 0, 0x1 | 0x4)
 
     def _begin_walk(self) -> None:
-        """Choose a long enough stride to read as an intentional little journey."""
-        self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(55.0, 78.0)
-        self._roam_remaining = random.uniform(5.0, 9.0)
+        """Take a few brisk, weighty steps before settling again."""
+        self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(100.0, 135.0)
+        self._roam_remaining = random.uniform(2.0, 4.5)
 
     def _update_squish(self, position: tuple[int, int]) -> None:
         if self._left_origin is None:
