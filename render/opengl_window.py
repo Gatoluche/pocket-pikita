@@ -367,9 +367,10 @@ class OpenGLWindow(Renderer):
         glLoadIdentity()
         glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
-        # Keep RGB visible locally while preserving alpha for OBS.
+        # Textures are premultiplied before upload, preventing transparent white
+        # edge pixels from forming a halo against the framed window's background.
         glBlendFuncSeparate(
-            GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA
+            GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA
         )
 
     @staticmethod
@@ -378,7 +379,7 @@ class OpenGLWindow(Renderer):
         glBindTexture(GL_TEXTURE_2D, texture)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        data = pygame.image.tostring(surface, "RGBA", False)
+        data = pygame.image.tostring(surface.premul_alpha(), "RGBA", False)
         glTexImage2D(
             GL_TEXTURE_2D,
             0,
@@ -542,19 +543,10 @@ class OpenGLWindow(Renderer):
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
         monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
-        perspective = (
-            _perspective_scale(window.top, monitor.top, monitor.bottom)
-            if monitor is not None
-            else 1.0
-        )
         canvas_width = self._overlay_width if self._desktop_transparent else self._width
         canvas_height = self._overlay_height if self._desktop_transparent else self._height
-        # The transparent overlay itself grows for perspective, avoiding any
-        # clipping. The framed fallback can still recede, but cannot enlarge.
-        if self._desktop_transparent:
-            perspective = 1.0
-        else:
-            perspective = min(1.0, perspective)
+        # The overlay canvas owns depth. The framed preview is always fixed-size.
+        perspective = 1.0
         width_scale = (1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y) * perspective
         height_scale = (1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x) * perspective
         if self._is_jumping():
@@ -628,10 +620,16 @@ class OpenGLWindow(Renderer):
         try:
             window = _Rect()
             self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+            monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
+            monitor_bounds = (
+                (monitor.left, monitor.top, monitor.right, monitor.bottom)
+                if monitor is not None
+                else None
+            )
             icon = self._desktop_icons.choose_visible(
                 ((window.left + window.right) // 2, (window.top + window.bottom) // 2)
-                if force
-                else None
+                if force else None,
+                monitor_bounds,
             )
         except OSError:
             return False

@@ -49,7 +49,11 @@ class DesktopIcons:
         self._kernel.OpenProcess.restype = wintypes.HANDLE
         self._kernel.VirtualAllocEx.restype = ctypes.c_void_p
 
-    def choose_visible(self, near: tuple[int, int] | None = None) -> DesktopIcon | None:
+    def choose_visible(
+        self,
+        near: tuple[int, int] | None = None,
+        monitor: tuple[int, int, int, int] | None = None,
+    ) -> DesktopIcon | None:
         list_view = self._desktop_list_view()
         if not list_view:
             return None
@@ -63,12 +67,21 @@ class DesktopIcons:
             candidates.sort(key=lambda index: self._distance_to_item(list_view, index, near))
         for index in candidates[:12]:
             point = self._item_position(list_view, index)
-            if point is None or not self._is_desktop_at(list_view, point):
+            center = (point[0] + 16, point[1] + 16) if point is not None else None
+            if (
+                point is None
+                or (monitor is not None and not self._point_in_monitor(center, monitor))
+                or not self._is_desktop_at(list_view, point)
+            ):
                 continue
             surface = self._shell_icon(index)
             if surface is not None:
                 return DesktopIcon((point[0] + 16, point[1] + 16), surface)
         return None
+
+    @staticmethod
+    def _point_in_monitor(point: tuple[int, int], monitor: tuple[int, int, int, int]) -> bool:
+        return monitor[0] <= point[0] < monitor[2] and monitor[1] <= point[1] < monitor[3]
 
     def _distance_to_item(self, list_view, index: int, near: tuple[int, int]) -> float:
         point = self._item_position(list_view, index)
