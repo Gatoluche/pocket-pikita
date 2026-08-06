@@ -152,6 +152,46 @@ def _rotated_bounds(width: float, height: float, angle: float) -> tuple[float, f
     return bounds_width, bounds_height
 
 
+def _rotate_screen_point(
+    point: tuple[float, float], center: tuple[float, float], angle: float
+) -> tuple[float, float]:
+    """Rotate a screen-space point with the same angle convention as pygame."""
+    radians = math.radians(angle)
+    cosine, sine = math.cos(radians), math.sin(radians)
+    dx, dy = point[0] - center[0], point[1] - center[1]
+    return (
+        center[0] + dx * cosine + dy * sine,
+        center[1] - dx * sine + dy * cosine,
+    )
+
+
+def _sprite_ratio_at_point(
+    point: tuple[float, float],
+    sprite_rect: tuple[float, float, float, float],
+    angle: float,
+) -> tuple[float, float]:
+    """Map a click on the rotated sprite back to its unrotated proportions."""
+    left, top, width, height = sprite_rect
+    center = (left + width / 2, top + height / 2)
+    x, y = _rotate_screen_point(point, center, -angle)
+    return (
+        max(0.0, min(1.0, (x - left) / max(width, 1))),
+        max(0.0, min(1.0, (y - top) / max(height, 1))),
+    )
+
+
+def _point_at_sprite_ratio(
+    ratio: tuple[float, float],
+    sprite_rect: tuple[float, float, float, float],
+    angle: float,
+) -> tuple[float, float]:
+    """Return where a normalized sprite point appears after rotation."""
+    left, top, width, height = sprite_rect
+    center = (left + width / 2, top + height / 2)
+    point = (left + ratio[0] * width, top + ratio[1] * height)
+    return _rotate_screen_point(point, center, angle)
+
+
 def _perspective_scale(sprite_top: int, monitor_top: int, monitor_bottom: int) -> float:
     """Map Pikita's visible top to depth, with his original size at screen center."""
     midpoint = (monitor_top + monitor_bottom) / 2
@@ -296,6 +336,8 @@ class OpenGLWindow(Renderer):
         self._left_drag: tuple[int, int, int, int] | None = None
         self._left_grab = (self._width // 2, self._height // 3)
         self._left_grab_ratio = (0.5, 1 / 3)
+        self._drag_cursor: tuple[int, int] | None = None
+        self._last_sprite_rect = (0.0, 0.0, float(self._width), float(self._height))
         self._drag_last_cursor: tuple[int, int] | None = None
         self._drag_last_time = time.monotonic()
         self._drag_velocity_x = 0.0
@@ -360,6 +402,9 @@ class OpenGLWindow(Renderer):
             ctypes.c_int
         ] * 4 + [ctypes.c_uint]
         self._user.GetCursorPos.argtypes = [ctypes.POINTER(_Point)]
+        # user32 is shared across modules; accept any compatible POINT struct.
+        self._user.ClientToScreen.argtypes = [wintypes.HWND, ctypes.c_void_p]
+        self._user.ClientToScreen.restype = wintypes.BOOL
         self._user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_Rect)]
         self._user.EnumDisplayMonitors.argtypes = [
             wintypes.HDC, ctypes.POINTER(_Rect), _MonitorEnumProc, wintypes.LPARAM
@@ -664,6 +709,7 @@ class OpenGLWindow(Renderer):
     def _render_layered(self, intent: PetIntent) -> None:
         sprite = self._surface_for(intent)
         left, top, width, height = self._sprite_layout(intent)
+        self._last_sprite_rect = (left, top, width, height)
         width, height = round(width), round(height)
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._overlay_width, self._overlay_height), pygame.SRCALPHA, 32)
@@ -801,6 +847,7 @@ class OpenGLWindow(Renderer):
             poked = self._left_max_move < DRAG_THRESHOLD
             self._left_origin = None
             self._left_drag = None
+            self._drag_cursor = None
             self._drag_target_angle = 0.0
             return poked
         if button == 3 and self._right_origin is not None:
@@ -816,28 +863,40 @@ class OpenGLWindow(Renderer):
     def _begin_window_drag(self, position: tuple[int, int]) -> None:
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        cursor_x, cursor_y = window.left + position[0], window.top + position[1]
+        cursor_x, cursor_y = self._client_to_screen(position)
         self._left_drag = (cursor_x, cursor_y, window.left, window.top)
-        padding_x = (self._overlay_width - self._overlay_sprite_width) / 2
-        padding_y = (self._overlay_height - self._overlay_sprite_height) / 2
-        grab_x = max(0.0, min(self._overlay_sprite_width, position[0] - padding_x))
-        grab_y = max(0.0, min(self._overlay_sprite_height, position[1] - padding_y))
-        self._left_grab_ratio = (
-            grab_x / max(self._overlay_sprite_width, 1),
-            grab_y / max(self._overlay_sprite_height, 1),
+        self._left_grab_ratio = _sprite_ratio_at_point(
+            position,
+            self._last_sprite_rect
+            if self._desktop_transparent
+            else (0.0, 0.0, float(self._width), float(self._height)),
+            self._drag_angle,
         )
+        self._drag_cursor = (cursor_x, cursor_y)
         self._drag_last_cursor = (cursor_x, cursor_y)
-        self._drag_last_time = time.monotonic()
+        now = time.monotonic()
+        self._drag_last_time = now
+        self._drag_physics_time = now
         self._drag_velocity_x = 0.0
+        self._drag_angular_velocity = 0.0
         self._roam_velocity = (0.0, 0.0)
         self._walk_kind = "idle"
+        self._jump_target = self._jump_origin = self._peek_target = None
+
+    def _client_to_screen(self, position: tuple[int, int]) -> tuple[int, int]:
+        point = _Point(round(position[0]), round(position[1]))
+        if not self._user.ClientToScreen(self._hwnd, ctypes.byref(point)):
+            window = _Rect()
+            self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+            return window.left + position[0], window.top + position[1]
+        return point.x, point.y
 
     def _move_window(self, position: tuple[int, int]) -> None:
         if self._left_drag is None:
             return
         current = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(current))
-        cursor_x, cursor_y = current.left + position[0], current.top + position[1]
+        cursor_x, cursor_y = self._client_to_screen(position)
         start_x, start_y, _, _ = self._left_drag
         self._left_max_move = max(
             self._left_max_move,
@@ -851,12 +910,40 @@ class OpenGLWindow(Renderer):
             smoothing = 1.0 - math.exp(-elapsed * 18.0)
             self._drag_velocity_x += (velocity_x - self._drag_velocity_x) * smoothing
         self._drag_last_cursor = (cursor_x, cursor_y)
+        self._drag_cursor = (cursor_x, cursor_y)
         self._drag_last_time = now
+        if self._desktop_transparent:
+            return
         self._user.SetWindowPos(
             self._hwnd,
             0,
             current.left + cursor_x - previous_cursor[0],
             current.top + cursor_y - previous_cursor[1],
+            0,
+            0,
+            0x1 | 0x4,
+        )
+
+    def _anchor_dragged_sprite(self, intent: PetIntent) -> None:
+        """Keep the exact grabbed point beneath the cursor as Pikita swings."""
+        if not self._desktop_transparent or self._left_drag is None or self._drag_cursor is None:
+            return
+        sprite_rect = self._sprite_layout(intent)
+        grabbed = _point_at_sprite_ratio(
+            self._left_grab_ratio, sprite_rect, self._drag_angle
+        )
+        client_origin_x, client_origin_y = self._client_to_screen((0, 0))
+        current = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(current))
+        delta_x = self._drag_cursor[0] - (client_origin_x + grabbed[0])
+        delta_y = self._drag_cursor[1] - (client_origin_y + grabbed[1])
+        if abs(delta_x) < 0.5 and abs(delta_y) < 0.5:
+            return
+        self._user.SetWindowPos(
+            self._hwnd,
+            0,
+            round(current.left + delta_x),
+            round(current.top + delta_y),
             0,
             0,
             0x1 | 0x4,
@@ -1240,6 +1327,7 @@ class OpenGLWindow(Renderer):
 
         if self._desktop_transparent:
             self._update_overlay_scale()
+            self._anchor_dragged_sprite(intent)
             self._render_layered(intent)
             self._clock.tick(FPS)
             return

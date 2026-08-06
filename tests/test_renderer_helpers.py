@@ -9,8 +9,10 @@ from render.opengl_window import (
     _jump_motion,
     _normalize,
     _perspective_scale,
+    _point_at_sprite_ratio,
     _rotated_quad,
     _rotated_bounds,
+    _sprite_ratio_at_point,
     _squish_from_drag,
     _walk_offset,
     _walk_speed_scale,
@@ -36,6 +38,24 @@ class RendererHelperTests(unittest.TestCase):
         width, height = _rotated_bounds(300, 600, 90)
         self.assertAlmostEqual(width, 600.0)
         self.assertAlmostEqual(height, 300.0)
+
+    def test_rotated_grab_point_round_trips_to_the_same_sprite_position(self):
+        sprite_rect = (200.0, 100.0, 300.0, 600.0)
+        for ratio in ((0.5, 0.08), (0.5, 0.92), (0.15, 0.5)):
+            point = _point_at_sprite_ratio(ratio, sprite_rect, 137.0)
+            recovered = _sprite_ratio_at_point(point, sprite_rect, 137.0)
+            self.assertAlmostEqual(recovered[0], ratio[0])
+            self.assertAlmostEqual(recovered[1], ratio[1])
+
+    def test_each_new_grab_replaces_top_or_bottom_ratio(self):
+        sprite_rect = (100.0, 80.0, 300.0, 600.0)
+        top = _sprite_ratio_at_point((250.0, 110.0), sprite_rect, 0.0)
+        bottom = _sprite_ratio_at_point((250.0, 650.0), sprite_rect, 0.0)
+        top_again = _sprite_ratio_at_point((250.0, 110.0), sprite_rect, 0.0)
+
+        self.assertLess(top[1], 0.1)
+        self.assertGreater(bottom[1], 0.9)
+        self.assertEqual(top_again, top)
 
     def test_translucent_sprite_edges_do_not_keep_white_rgb(self):
         surface = pygame.Surface((2, 1), pygame.SRCALPHA)
