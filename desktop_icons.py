@@ -5,10 +5,13 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
+import os
 import random
 
-from PIL import ImageGrab
 import pygame
+import win32gui
+import win32ui
+from win32com.shell import shell, shellcon
 
 LVM_FIRST = 0x1000
 LVM_GETITEMCOUNT = LVM_FIRST + 4
@@ -62,13 +65,9 @@ class DesktopIcons:
             point = self._item_position(list_view, index)
             if point is None or not self._is_desktop_at(list_view, point):
                 continue
-            # Explorer reports the icon's upper-left corner. Keep the label out.
-            image = ImageGrab.grab(bbox=(point[0], point[1], point[0] + 64, point[1] + 64))
-            surface = pygame.image.fromstring(image.tobytes(), image.size, image.mode).convert_alpha()
-            # Remove the captured desktop behind the icon. It is sampled from
-            # the corner, so it does not turn a dark wallpaper into a black tile.
-            surface.set_colorkey(surface.get_at((0, 0)))
-            return DesktopIcon((point[0] + 32, point[1] + 32), surface)
+            surface = self._shell_icon(index)
+            if surface is not None:
+                return DesktopIcon((point[0] + 16, point[1] + 16), surface)
         return None
 
     def _distance_to_item(self, list_view, index: int, near: tuple[int, int]) -> float:
@@ -76,6 +75,38 @@ class DesktopIcons:
         if point is None:
             return float("inf")
         return (point[0] - near[0]) ** 2 + (point[1] - near[1]) ** 2
+
+    @staticmethod
+    def _shell_icon(index: int) -> pygame.Surface | None:
+        """Get transparent icon pixels from the Windows Shell, not a screenshot."""
+        folders = [os.path.join(os.path.expanduser("~"), "Desktop")]
+        public_desktop = os.path.join(os.environ.get("PUBLIC", r"C:\\Users\\Public"), "Desktop")
+        if os.path.isdir(public_desktop):
+            folders.append(public_desktop)
+        paths = [os.path.join(folder, name) for folder in folders if os.path.isdir(folder)
+                 for name in sorted(os.listdir(folder)) if name.lower() != "desktop.ini"]
+        if not paths:
+            return None
+        try:
+            result = shell.SHGetFileInfo(
+                paths[index % len(paths)], 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON
+            )
+            icon = result[1][0]
+            icon_info = win32gui.GetIconInfo(icon)
+            bitmap = win32ui.CreateBitmapFromHandle(icon_info[4])
+            info = bitmap.GetInfo()
+            pixels = bitmap.GetBitmapBits(True)
+            return pygame.image.frombuffer(
+                pixels, (info["bmWidth"], info["bmHeight"]), "BGRA"
+            ).copy()
+        except (OSError, win32gui.error):
+            return None
+        finally:
+            if "icon" in locals():
+                win32gui.DestroyIcon(icon)
+            if "icon_info" in locals():
+                win32gui.DeleteObject(icon_info[3])
+                win32gui.DeleteObject(icon_info[4])
 
     def _desktop_list_view(self):
         progman = self._user.FindWindowW("Progman", None)
