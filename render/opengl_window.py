@@ -70,6 +70,8 @@ WM_MOUSEMOVE = 0x0200
 CURSOR_NOTICE_DISTANCE = 520
 SCREEN_EDGE_DISTANCE = 36
 JUMP_DURATION = 0.6
+DRAG_REST_ANGLE = 0.15
+DRAG_REST_SPEED = 0.5
 
 
 def _normalize(name: str) -> str:
@@ -293,8 +295,10 @@ class OpenGLWindow(Renderer):
         self._left_max_move = 0.0
         self._left_drag: tuple[int, int, int, int] | None = None
         self._left_grab = (self._width // 2, self._height // 3)
+        self._left_grab_ratio = (0.5, 1 / 3)
         self._drag_last_cursor: tuple[int, int] | None = None
         self._drag_last_time = time.monotonic()
+        self._drag_velocity_x = 0.0
         self._drag_angle = 0.0
         self._drag_target_angle = 0.0
         self._drag_angular_velocity = 0.0
@@ -588,23 +592,35 @@ class OpenGLWindow(Renderer):
         scale = _perspective_scale(round(sprite_top), monitor.top, monitor.bottom)
         sprite_width = round(self._width * scale)
         sprite_height = round(self._height * scale)
-        bounds_width, bounds_height = _rotated_bounds(
-            sprite_width, sprite_height, self._drag_angle
+        rotating = (
+            self._left_drag is not None
+            or abs(self._drag_angle) >= DRAG_REST_ANGLE
+            or abs(self._drag_angular_velocity) >= DRAG_REST_SPEED
         )
-        width = max(sprite_width, math.ceil(bounds_width))
-        height = max(sprite_height, math.ceil(bounds_height))
-        if (
-            width == self._overlay_width
-            and height == self._overlay_height
-            and sprite_width == self._overlay_sprite_width
-            and sprite_height == self._overlay_sprite_height
-        ):
+        if rotating:
+            # Allocate once for the whole gesture. Rebuilding the native DIB at
+            # every angle was the source of the visible drag jitter.
+            maximum_scale = 1.55
+            diameter = math.ceil(
+                math.hypot(self._width * maximum_scale, self._height * maximum_scale)
+            )
+            width = height = diameter
+        else:
+            width, height = sprite_width, sprite_height
+        canvas_changed = width != self._overlay_width or height != self._overlay_height
+        sprite_changed = (
+            sprite_width != self._overlay_sprite_width
+            or sprite_height != self._overlay_sprite_height
+        )
+        if not canvas_changed and not sprite_changed:
+            return
+        self._overlay_sprite_width, self._overlay_sprite_height = sprite_width, sprite_height
+        if not canvas_changed:
             return
         center_x = (window.left + window.right) / 2
         center_y = (window.top + window.bottom) / 2
         self._destroy_layered_buffer()
         self._overlay_width, self._overlay_height = width, height
-        self._overlay_sprite_width, self._overlay_sprite_height = sprite_width, sprite_height
         self._user.SetWindowPos(
             self._hwnd,
             0,
@@ -652,7 +668,7 @@ class OpenGLWindow(Renderer):
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._overlay_width, self._overlay_height), pygame.SRCALPHA, 32)
         if abs(self._drag_angle) > 0.1:
-            sprite = pygame.transform.rotate(sprite, self._drag_angle)
+            sprite = pygame.transform.rotozoom(sprite, self._drag_angle, 1.0)
             center = (round(left + width / 2), round(top + height / 2))
             frame.blit(sprite, sprite.get_rect(center=center))
         else:
@@ -802,9 +818,17 @@ class OpenGLWindow(Renderer):
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
         cursor_x, cursor_y = window.left + position[0], window.top + position[1]
         self._left_drag = (cursor_x, cursor_y, window.left, window.top)
-        self._left_grab = position
+        padding_x = (self._overlay_width - self._overlay_sprite_width) / 2
+        padding_y = (self._overlay_height - self._overlay_sprite_height) / 2
+        grab_x = max(0.0, min(self._overlay_sprite_width, position[0] - padding_x))
+        grab_y = max(0.0, min(self._overlay_sprite_height, position[1] - padding_y))
+        self._left_grab_ratio = (
+            grab_x / max(self._overlay_sprite_width, 1),
+            grab_y / max(self._overlay_sprite_height, 1),
+        )
         self._drag_last_cursor = (cursor_x, cursor_y)
         self._drag_last_time = time.monotonic()
+        self._drag_velocity_x = 0.0
         self._roam_velocity = (0.0, 0.0)
         self._walk_kind = "idle"
 
@@ -824,16 +848,8 @@ class OpenGLWindow(Renderer):
         if self._drag_last_cursor is not None:
             elapsed = max(now - self._drag_last_time, 0.001)
             velocity_x = (cursor_x - self._drag_last_cursor[0]) / elapsed
-            target = _grab_angle(
-                self._left_grab,
-                (self._overlay_sprite_width, self._overlay_sprite_height)
-                if self._desktop_transparent else (self._width, self._height),
-                velocity_x,
-            )
-            previous = self._drag_angle
-            self._drag_target_angle = target
-            self._drag_angle += (target - self._drag_angle) * 0.42
-            self._drag_angular_velocity = (self._drag_angle - previous) / elapsed
+            smoothing = 1.0 - math.exp(-elapsed * 18.0)
+            self._drag_velocity_x += (velocity_x - self._drag_velocity_x) * smoothing
         self._drag_last_cursor = (cursor_x, cursor_y)
         self._drag_last_time = now
         self._user.SetWindowPos(
@@ -851,7 +867,12 @@ class OpenGLWindow(Renderer):
         now = time.monotonic()
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
-        if self._left_drag is not None or self._right_origin is not None:
+        if (
+            self._left_drag is not None
+            or self._right_origin is not None
+            or abs(self._drag_angle) >= DRAG_REST_ANGLE
+            or abs(self._drag_angular_velocity) >= DRAG_REST_SPEED
+        ):
             return
 
         if self._snack_target is not None:
@@ -1117,12 +1138,33 @@ class OpenGLWindow(Renderer):
         dt = min(now - self._drag_physics_time, 0.05)
         self._drag_physics_time = now
         if self._left_drag is not None:
-            self._drag_angle += (self._drag_target_angle - self._drag_angle) * min(1.0, dt * 12.0)
-            return
-        acceleration = -self._drag_angle * 20.0 - self._drag_angular_velocity * 7.5
+            self._drag_velocity_x *= math.exp(-dt * 9.0)
+            size = (
+                (self._overlay_sprite_width, self._overlay_sprite_height)
+                if self._desktop_transparent else (self._width, self._height)
+            )
+            self._left_grab = (
+                round(self._left_grab_ratio[0] * size[0]),
+                round(self._left_grab_ratio[1] * size[1]),
+            )
+            self._drag_target_angle = _grab_angle(
+                self._left_grab, size, self._drag_velocity_x
+            )
+            stiffness, damping = 72.0, 17.0
+            acceleration = (
+                (self._drag_target_angle - self._drag_angle) * stiffness
+                - self._drag_angular_velocity * damping
+            )
+        else:
+            stiffness, damping = 28.0, 10.5
+            acceleration = -self._drag_angle * stiffness - self._drag_angular_velocity * damping
         self._drag_angular_velocity += acceleration * dt
+        self._drag_angular_velocity = max(-720.0, min(720.0, self._drag_angular_velocity))
         self._drag_angle += self._drag_angular_velocity * dt
-        if abs(self._drag_angle) < 0.08 and abs(self._drag_angular_velocity) < 0.08:
+        if (
+            abs(self._drag_angle) < DRAG_REST_ANGLE
+            and abs(self._drag_angular_velocity) < DRAG_REST_SPEED
+        ):
             self._drag_angle = self._drag_angular_velocity = 0.0
 
     def pump_events(self) -> FrameInput:
