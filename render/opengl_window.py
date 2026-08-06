@@ -610,6 +610,9 @@ class OpenGLWindow(Renderer):
         mouth_y = sprite_top + sprite_height * 0.57
         size = max(4, round(48 * (1.0 - max(0.0, progress - 0.62) / 0.38)))
         icon = pygame.transform.smoothscale(self._eating_icon.image, (size, size))
+        # smoothscale drops a source colorkey, which otherwise resurrects the
+        # captured desktop background as an opaque black rectangle.
+        icon.set_colorkey(icon.get_at((0, 0)))
         start_x, start_y = sprite_width * 0.86, sprite_height * 0.72
         x = sprite_left + start_x + (mouth_x - (sprite_left + start_x)) * progress - size / 2
         y = sprite_top + start_y + (mouth_y - (sprite_top + start_y)) * progress - size / 2
