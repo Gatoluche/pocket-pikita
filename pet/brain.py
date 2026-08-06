@@ -1,8 +1,4 @@
-"""Decides what Pikita is doing each frame.
-
-Idle: he blinks on a random timer. Poke him and he reacts - a happy squeeze
-plus a squeaky-toy noise - then settles back to idling.
-"""
+"""Pikita's small, renderer-independent behaviour state machine."""
 
 import random
 
@@ -11,6 +7,10 @@ from pet.intent import Expression, PetIntent, Sound
 BLINK_DURATION = 0.12         # how long the eyes stay shut, in seconds
 MIN_GAP, MAX_GAP = 2.0, 5.0   # range between blinks, in seconds
 REACTION_DURATION = 0.6       # how long a poke reaction lasts, in seconds
+SQUEAK_INTERVAL = 0.14
+MIN_IDLE_GAP, MAX_IDLE_GAP = 7.0, 14.0
+IDLE_EXPRESSIONS = (Expression.SMUG, Expression.WINK, Expression.UNIMPRESSED)
+POKE_EXPRESSIONS = (Expression.HAPPY, Expression.WINK, Expression.BLUSH)
 
 
 class Brain:
@@ -19,19 +19,57 @@ class Brain:
         self._timer = 0.0
         self._gap = random.uniform(MIN_GAP, MAX_GAP)
         self._reacting = 0.0  # seconds of poke reaction left
+        self._reaction_expression = Expression.HAPPY
+        self._idle_expression = Expression.BASE
+        self._idle_timer = random.uniform(MIN_IDLE_GAP, MAX_IDLE_GAP)
+        self._idle_remaining = 0.0
+        self._squeak_timer = 0.0
 
-    def update(self, dt: float, poked: bool = False) -> PetIntent:
+    def update(
+        self,
+        dt: float,
+        poked: bool = False,
+        squish_x: float = 0.0,
+        squish_y: float = 0.0,
+    ) -> PetIntent:
         # dt = seconds elapsed since the last frame, so timing is framerate-independent.
         if poked:
             # Start (or restart) the reaction and squeak this one frame only.
             self._reacting = REACTION_DURATION
+            self._reaction_expression = random.choice(POKE_EXPRESSIONS)
             self._eyes_shut = False
             self._timer = 0.0
-            return PetIntent(expression=Expression.HAPPY, sound=Sound.SQUEAK)
+            return PetIntent(expression=self._reaction_expression, sound=Sound.SQUEAK)
+
+        squishing = squish_x > 0.0 or squish_y > 0.0
+        if squishing:
+            sound = None
+            self._squeak_timer -= dt
+            if self._squeak_timer <= 0.0:
+                sound = Sound.SQUEAK
+                self._squeak_timer = SQUEAK_INTERVAL
+            return PetIntent(
+                expression=Expression.HAPPY,
+                sound=sound,
+                squish_x=squish_x,
+                squish_y=squish_y,
+            )
+        self._squeak_timer = 0.0
 
         if self._reacting > 0.0:
             self._reacting -= dt
-            return PetIntent(expression=Expression.HAPPY)
+            return PetIntent(expression=self._reaction_expression)
+
+        if self._idle_remaining > 0.0:
+            self._idle_remaining -= dt
+            return PetIntent(expression=self._idle_expression)
+
+        self._idle_timer -= dt
+        if self._idle_timer <= 0.0:
+            self._idle_expression = random.choice(IDLE_EXPRESSIONS)
+            self._idle_remaining = random.uniform(0.7, 1.4)
+            self._idle_timer = random.uniform(MIN_IDLE_GAP, MAX_IDLE_GAP)
+            return PetIntent(expression=self._idle_expression)
 
         # Idle: blink on a timer.
         self._timer += dt

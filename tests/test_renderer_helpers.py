@@ -1,0 +1,21 @@
+import unittest
+
+from render.opengl_window import _normalize, _squish_from_drag
+
+
+class RendererHelperTests(unittest.TestCase):
+    def test_asset_names_are_normalized(self):
+        self.assertEqual(_normalize("Sad + Speak.png"), "sad+speak")
+
+    def test_horizontal_inward_drag_squishes_horizontally(self):
+        x, y = _squish_from_drag((10, 300), (80, 300), (300, 600))
+        self.assertGreater(x, 0.0)
+        self.assertEqual(y, 0.0)
+
+    def test_vertical_outward_drag_does_not_squish(self):
+        x, y = _squish_from_drag((150, 50), (150, 10), (300, 600))
+        self.assertEqual((x, y), (0.0, 0.0))
+
+
+if __name__ == "__main__":
+    unittest.main()
