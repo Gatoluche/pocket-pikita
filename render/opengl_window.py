@@ -388,17 +388,18 @@ class OpenGLWindow(Renderer):
         self._desktop_transparent = enable
 
     def _create_overlay_window(self, x: int, y: int) -> None:
-        callback_type = ctypes.WINFUNCTYPE(
-            ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM
-        )
-        self._window_proc = callback_type(self._native_window_proc)
-        self._overlay_class_name = f"PocketPikitaOverlay{ id(self) }"
-        window_class = _WindowClass()
-        window_class.window_proc = ctypes.cast(self._window_proc, ctypes.c_void_p).value
-        window_class.instance = self._kernel.GetModuleHandleW(None)
-        window_class.class_name = self._overlay_class_name
-        if not self._user.RegisterClassW(ctypes.byref(window_class)):
-            raise OSError(f"Could not register transparent window: {ctypes.get_last_error()}")
+        if self._overlay_class_name is None:
+            callback_type = ctypes.WINFUNCTYPE(
+                ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM
+            )
+            self._window_proc = callback_type(self._native_window_proc)
+            self._overlay_class_name = f"PocketPikitaOverlay{ id(self) }"
+            window_class = _WindowClass()
+            window_class.window_proc = ctypes.cast(self._window_proc, ctypes.c_void_p).value
+            window_class.instance = self._kernel.GetModuleHandleW(None)
+            window_class.class_name = self._overlay_class_name
+            if not self._user.RegisterClassW(ctypes.byref(window_class)):
+                raise OSError(f"Could not register transparent window: {ctypes.get_last_error()}")
 
         overlay = self._user.CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW,
@@ -411,7 +412,7 @@ class OpenGLWindow(Renderer):
             self._height,
             None,
             None,
-            window_class.instance,
+            self._kernel.GetModuleHandleW(None),
             None,
         )
         if not overlay:
@@ -425,7 +426,6 @@ class OpenGLWindow(Renderer):
         if self._overlay_hwnd:
             self._user.DestroyWindow(self._overlay_hwnd)
         self._overlay_hwnd = None
-        self._window_proc = None
 
     def _create_layered_buffer(self) -> None:
         screen_dc = self._user.GetDC(None)
