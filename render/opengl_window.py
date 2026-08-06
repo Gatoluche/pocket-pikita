@@ -6,6 +6,7 @@ from array import array
 from ctypes import wintypes
 from pathlib import Path
 import random
+import time
 
 import pygame
 from OpenGL.GL import (
@@ -50,6 +51,9 @@ from render.renderer import Renderer
 TARGET_HEIGHT = 600
 FPS = 60
 BACKGROUND = (0.075, 0.085, 0.12)
+# Deliberately absent from the sprites. Windows removes this color only while
+# desktop-transparency is enabled; the alpha buffer remains available to OBS.
+TRANSPARENCY_KEY = (1.0, 0.0, 1.0)
 DRAG_THRESHOLD = 6
 
 
@@ -73,15 +77,6 @@ def _squish_from_drag(
         max(0.0, min(1.0, inward_x / max(abs(from_center_x), 1))),
         max(0.0, min(1.0, inward_y / max(abs(from_center_y), 1))),
     )
-
-
-class _DwmBlurBehind(ctypes.Structure):
-    _fields_ = [
-        ("dwFlags", ctypes.c_uint),
-        ("fEnable", ctypes.c_int),
-        ("hRgnBlur", wintypes.HRGN),
-        ("fTransitionOnMaximized", ctypes.c_int),
-    ]
 
 
 class _Point(ctypes.Structure):
@@ -119,8 +114,10 @@ class OpenGLWindow(Renderer):
         pygame.display.set_caption("Pocket Pikita")
 
         self._hwnd = pygame.display.get_wm_info()["window"]
+        self._gl_hwnd = self._hwnd
         self._configure_win32()
         self._always_on_top = bool(settings.get("always_on_top", True))
+        self._roaming = bool(settings.get("roaming", True))
         self._desktop_transparent = False
         position = settings.get("position")
         if isinstance(position, list) and len(position) == 2:
@@ -128,14 +125,15 @@ class OpenGLWindow(Renderer):
                 self._hwnd, 0, int(position[0]), int(position[1]), 0, 0, 0x1 | 0x4
             )
         self._set_topmost(self._always_on_top)
-        if settings.get("desktop_transparent", False):
-            self._set_desktop_transparency(True)
 
         self._textures: dict[str, int] = {}
+        self._surfaces: dict[str, pygame.Surface] = {}
         for png in pngs:
             surface = pygame.image.load(str(png)).convert_alpha()
             surface = pygame.transform.smoothscale(surface, (self._width, self._height))
-            self._textures[_normalize(png.name)] = self._make_texture(surface)
+            key = _normalize(png.name)
+            self._surfaces[key] = surface
+            self._textures[key] = self._make_texture(surface)
 
         self._setup_gl()
         self._clock = pygame.time.Clock()
@@ -144,6 +142,9 @@ class OpenGLWindow(Renderer):
         self._squish_x = 0.0
         self._squish_y = 0.0
         self._right_drag: tuple[int, int, int, int] | None = None
+        self._roam_remaining = random.uniform(12.0, 24.0)
+        self._roam_velocity = 0.0
+        self._last_roam_time = time.monotonic()
 
         try:
             if pygame.mixer.get_init() is None:
@@ -161,22 +162,25 @@ class OpenGLWindow(Renderer):
             self._held_squeak = None
             self._held_channel = None
 
+        if settings.get("desktop_transparent", False):
+            self._set_desktop_transparency(True)
+
     def _configure_win32(self) -> None:
-        self._dwm = ctypes.windll.dwmapi
         self._gdi = ctypes.windll.gdi32
         self._user = ctypes.windll.user32
-        self._dwm.DwmEnableBlurBehindWindow.argtypes = [
-            wintypes.HWND, ctypes.POINTER(_DwmBlurBehind)
-        ]
-        self._dwm.DwmEnableBlurBehindWindow.restype = ctypes.c_long
-        self._gdi.CreateRectRgn.argtypes = [ctypes.c_int] * 4
-        self._gdi.CreateRectRgn.restype = wintypes.HRGN
-        self._gdi.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        self._user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        self._user.GetWindowLongW.restype = ctypes.c_long
+        self._user.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        self._user.SetWindowLongW.restype = ctypes.c_long
         self._user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND] + [
             ctypes.c_int
         ] * 4 + [ctypes.c_uint]
         self._user.GetCursorPos.argtypes = [ctypes.POINTER(_Point)]
         self._user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_Rect)]
+        self._user.SetLayeredWindowAttributes.argtypes = [
+            wintypes.HWND, wintypes.COLORREF, ctypes.c_byte, ctypes.c_uint
+        ]
+        self._user.SetLayeredWindowAttributes.restype = wintypes.BOOL
 
     def _load_settings(self) -> dict:
         try:
@@ -191,6 +195,7 @@ class OpenGLWindow(Renderer):
             "position": [window.left, window.top],
             "desktop_transparent": self._desktop_transparent,
             "always_on_top": self._always_on_top,
+            "roaming": self._roaming,
         }
         self._settings_path.write_text(
             json.dumps(settings, indent=2) + "\n", encoding="utf-8"
@@ -250,7 +255,7 @@ class OpenGLWindow(Renderer):
         silence = b"\x00" * (round(frequency * silence_seconds) * channels * 2)
         return pygame.mixer.Sound(buffer=sound.get_raw() + silence)
 
-    def _texture_for(self, intent: PetIntent) -> int:
+    def _sprite_key_for(self, intent: PetIntent) -> str:
         expression = intent.expression.value
         candidates = []
         if intent.blinking and intent.talking:
@@ -261,27 +266,35 @@ class OpenGLWindow(Renderer):
             candidates.append(f"{expression}+Speak")
         candidates.append(expression)
         for candidate in candidates:
-            texture = self._textures.get(_normalize(candidate))
-            if texture is not None:
-                return texture
-        return self._textures[_normalize("Base")]
+            key = _normalize(candidate)
+            if key in self._textures:
+                return key
+        return _normalize("Base")
+
+    def _texture_for(self, intent: PetIntent) -> int:
+        return self._textures[self._sprite_key_for(intent)]
+
+    def _surface_for(self, intent: PetIntent) -> pygame.Surface:
+        return self._surfaces[self._sprite_key_for(intent)]
 
     def _set_desktop_transparency(self, enable: bool) -> None:
-        blur = _DwmBlurBehind()
-        region = None
+        """Toggle a color-keyed, input-capable version of the GL window.
+
+        The old DWM blur path made the entire client area a translucent
+        material, which is why the desktop showed a dark square. A color key
+        removes just the deliberately rendered magenta background instead.
+        """
         if enable:
-            region = self._gdi.CreateRectRgn(0, 0, -1, -1)
-            blur.dwFlags = 0x1 | 0x2
-            blur.fEnable = 1
-            blur.hRgnBlur = region
+            style = self._user.GetWindowLongW(self._gl_hwnd, -20)  # GWL_EXSTYLE
+            self._user.SetWindowLongW(self._gl_hwnd, -20, style | 0x00080000)
+            # COLORREF is packed as 0x00bbggrr, so magenta is 0x00ff00ff.
+            if not self._user.SetLayeredWindowAttributes(
+                self._gl_hwnd, 0x00FF00FF, 0, 0x1  # LWA_COLORKEY
+            ):
+                raise OSError(f"Could not apply desktop transparency: {ctypes.get_last_error()}")
         else:
-            blur.dwFlags = 0x1
-            blur.fEnable = 0
-        result = self._dwm.DwmEnableBlurBehindWindow(self._hwnd, ctypes.byref(blur))
-        if region:
-            self._gdi.DeleteObject(region)
-        if result != 0:
-            raise OSError(f"DWM blur setting failed: HRESULT {result}")
+            style = self._user.GetWindowLongW(self._gl_hwnd, -20)
+            self._user.SetWindowLongW(self._gl_hwnd, -20, style & ~0x00080000)
         self._desktop_transparent = enable
 
     def _set_topmost(self, enable: bool) -> None:
@@ -312,6 +325,38 @@ class OpenGLWindow(Renderer):
             0x1 | 0x4,
         )
 
+    def _wander(self) -> None:
+        """Occasionally take a small horizontal walk, then settle again."""
+        now = time.monotonic()
+        dt = min(now - self._last_roam_time, 0.1)
+        self._last_roam_time = now
+        if not self._roaming or self._right_drag is not None or self._left_origin is not None:
+            return
+
+        self._roam_remaining -= dt
+        if self._roam_remaining <= 0.0:
+            if self._roam_velocity:
+                # Rest long enough that Pikita feels alive, not restless.
+                self._roam_velocity = 0.0
+                self._roam_remaining = random.uniform(14.0, 30.0)
+            else:
+                self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(18.0, 32.0)
+                self._roam_remaining = random.uniform(2.0, 4.5)
+
+        if not self._roam_velocity:
+            return
+
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        next_x = round(window.left + self._roam_velocity * dt)
+        # Keep him on the virtual desktop, even on a multi-monitor setup.
+        left = self._user.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
+        width = self._user.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+        next_x = max(left, min(left + width - self._width, next_x))
+        if next_x in (left, left + width - self._width):
+            self._roam_velocity *= -1
+        self._user.SetWindowPos(self._hwnd, 0, next_x, window.top, 0, 0, 0x1 | 0x4)
+
     def _update_squish(self, position: tuple[int, int]) -> None:
         if self._left_origin is None:
             return
@@ -336,6 +381,9 @@ class OpenGLWindow(Renderer):
                     self._set_desktop_transparency(not self._desktop_transparent)
                 elif event.key == pygame.K_a:
                     self._set_topmost(not self._always_on_top)
+                elif event.key == pygame.K_m:
+                    self._roaming = not self._roaming
+                    self._roam_remaining = random.uniform(12.0, 24.0)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
                     self._left_origin = event.pos
@@ -363,6 +411,7 @@ class OpenGLWindow(Renderer):
         )
 
     def render(self, intent: PetIntent) -> None:
+        self._wander()
         if intent.sound is Sound.SQUEAK and self._poke_sounds:
             random.choice(self._poke_sounds).play()
 
@@ -375,7 +424,8 @@ class OpenGLWindow(Renderer):
             self._held_channel.fadeout(100)
             self._held_channel = None
 
-        glClearColor(*BACKGROUND, 0.0)
+        background = TRANSPARENCY_KEY if self._desktop_transparent else BACKGROUND
+        glClearColor(*background, 0.0)
         glClear(GL_COLOR_BUFFER_BIT)
         glBindTexture(GL_TEXTURE_2D, self._texture_for(intent))
 
