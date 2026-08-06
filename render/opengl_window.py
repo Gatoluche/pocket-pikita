@@ -616,12 +616,18 @@ class OpenGLWindow(Renderer):
         if progress >= 1.0:
             self._eating_icon = None
 
-    def _try_eat_desktop_icon(self, now: float) -> bool:
-        if self._eating_icon is not None or now < self._next_icon_try:
+    def _try_eat_desktop_icon(self, now: float, force: bool = False) -> bool:
+        if self._eating_icon is not None or (not force and now < self._next_icon_try):
             return False
         self._next_icon_try = now + random.uniform(35.0, 65.0)
         try:
-            icon = self._desktop_icons.choose_visible()
+            window = _Rect()
+            self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+            icon = self._desktop_icons.choose_visible(
+                ((window.left + window.right) // 2, (window.top + window.bottom) // 2)
+                if force
+                else None
+            )
         except OSError:
             return False
         if icon is None:
@@ -672,6 +678,9 @@ class OpenGLWindow(Renderer):
         elif key in (pygame.K_m, 0x4D):
             # M is a nudge: make him take a little walk right now.
             self._begin_walk()
+        elif key in (pygame.K_e, 0x45) and self._desktop_transparent:
+            # E is deliberately a manual test of the visible-icon behavior.
+            self._try_eat_desktop_icon(time.monotonic(), force=True)
         return False
 
     def _handle_mouse_down(self, button: int, position: tuple[int, int]) -> None:

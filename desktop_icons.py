@@ -46,7 +46,7 @@ class DesktopIcons:
         self._kernel.OpenProcess.restype = wintypes.HANDLE
         self._kernel.VirtualAllocEx.restype = ctypes.c_void_p
 
-    def choose_visible(self) -> DesktopIcon | None:
+    def choose_visible(self, near: tuple[int, int] | None = None) -> DesktopIcon | None:
         list_view = self._desktop_list_view()
         if not list_view:
             return None
@@ -54,7 +54,10 @@ class DesktopIcons:
         if count <= 0:
             return None
         candidates = list(range(count))
-        random.shuffle(candidates)
+        if near is None:
+            random.shuffle(candidates)
+        else:
+            candidates.sort(key=lambda index: self._distance_to_item(list_view, index, near))
         for index in candidates[:12]:
             point = self._item_position(list_view, index)
             if point is None or not self._is_desktop_at(list_view, point):
@@ -64,6 +67,12 @@ class DesktopIcons:
             surface = pygame.image.fromstring(image.tobytes(), image.size, image.mode).convert_alpha()
             return DesktopIcon(point, surface)
         return None
+
+    def _distance_to_item(self, list_view, index: int, near: tuple[int, int]) -> float:
+        point = self._item_position(list_view, index)
+        if point is None:
+            return float("inf")
+        return (point[0] - near[0]) ** 2 + (point[1] - near[1]) ** 2
 
     def _desktop_list_view(self):
         progman = self._user.FindWindowW("Progman", None)
