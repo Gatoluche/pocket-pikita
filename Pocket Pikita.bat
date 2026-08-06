@@ -30,6 +30,10 @@ pause
 exit /b 1
 
 :launch
+REM There can only be one. Retire older copies launched from this project.
+set "PIKITA_MAIN=%~dp0main.py"
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^python(w)?\.exe$' -and $_.CommandLine -like ('*' + $env:PIKITA_MAIN + '*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>nul
+
 %PYTHON% -c "import pygame, OpenGL" >nul 2>nul
 if errorlevel 1 (
     echo Pocket Pikita found Python, but a required package is missing.

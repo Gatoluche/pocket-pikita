@@ -117,6 +117,38 @@ def _walk_speed_scale(seconds: float) -> float:
     return 0.45 + 0.55 * abs(math.sin(seconds * 11.0))
 
 
+def _grab_angle(grab: tuple[int, int], size: tuple[int, int], velocity_x: float) -> float:
+    """Combine pendulum swing with the orientation implied by the grab point."""
+    x, y = grab
+    width, height = size
+    depth = max(0.0, min(1.0, (y / max(height, 1) - 0.62) / 0.28))
+    inversion = (180.0 if x < width / 2 else -180.0) * depth
+    swing = max(-38.0, min(38.0, velocity_x * 0.075)) * (1.0 - depth)
+    return inversion + swing
+
+
+def _rotated_quad(
+    left: float, top: float, width: float, height: float, angle: float
+) -> list[tuple[float, float]]:
+    """Return clockwise screen-space corners rotated around the sprite center."""
+    center_x, center_y = left + width / 2, top + height / 2
+    radians = math.radians(angle)
+    cosine, sine = math.cos(radians), math.sin(radians)
+    corners = []
+    for x, y in ((left, top), (left + width, top), (left + width, top + height), (left, top + height)):
+        dx, dy = x - center_x, y - center_y
+        corners.append((center_x + dx * cosine - dy * sine, center_y + dx * sine + dy * cosine))
+    return corners
+
+
+def _rotation_fit(width: float, height: float, angle: float, canvas: tuple[float, float]) -> float:
+    """Scale a rotated rectangle just enough to keep it inside its canvas."""
+    radians = math.radians(angle)
+    bounds_width = abs(width * math.cos(radians)) + abs(height * math.sin(radians))
+    bounds_height = abs(width * math.sin(radians)) + abs(height * math.cos(radians))
+    return min(1.0, canvas[0] / max(bounds_width, 1), canvas[1] / max(bounds_height, 1))
+
+
 def _perspective_scale(sprite_top: int, monitor_top: int, monitor_bottom: int) -> float:
     """Map Pikita's visible top to depth, with his original size at screen center."""
     midpoint = (monitor_top + monitor_bottom) / 2
@@ -256,9 +288,17 @@ class OpenGLWindow(Renderer):
         self._clock = pygame.time.Clock()
         self._left_origin: tuple[int, int] | None = None
         self._left_max_move = 0.0
+        self._left_drag: tuple[int, int, int, int] | None = None
+        self._left_grab = (self._width // 2, self._height // 3)
+        self._drag_last_cursor: tuple[int, int] | None = None
+        self._drag_last_time = time.monotonic()
+        self._drag_angle = 0.0
+        self._drag_target_angle = 0.0
+        self._drag_angular_velocity = 0.0
+        self._drag_physics_time = self._drag_last_time
+        self._right_origin: tuple[int, int] | None = None
         self._squish_x = 0.0
         self._squish_y = 0.0
-        self._right_drag: tuple[int, int, int, int] | None = None
         self._roam_remaining = random.uniform(12.0, 24.0)
         self._roam_velocity = (0.0, 0.0)
         self._walk_kind = "idle"
@@ -586,7 +626,22 @@ class OpenGLWindow(Renderer):
         width, height = round(width), round(height)
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._overlay_width, self._overlay_height), pygame.SRCALPHA, 32)
-        frame.blit(sprite, (round(left), round(top)))
+        if abs(self._drag_angle) > 0.1:
+            sprite = pygame.transform.rotate(sprite, self._drag_angle)
+            fit = min(
+                1.0,
+                self._overlay_width / max(sprite.get_width(), 1),
+                self._overlay_height / max(sprite.get_height(), 1),
+            )
+            if fit < 1.0:
+                sprite = pygame.transform.smoothscale(
+                    sprite,
+                    (round(sprite.get_width() * fit), round(sprite.get_height() * fit)),
+                )
+            center = (round(left + width / 2), round(top + height / 2))
+            frame.blit(sprite, sprite.get_rect(center=center))
+        else:
+            frame.blit(sprite, (round(left), round(top)))
         self._draw_eating_icon(frame, left, top, width, height)
         pixels = pygame.image.tostring(frame.premul_alpha(), "BGRA", False)
         ctypes.memmove(self._layered_bits, pixels, len(pixels))
@@ -704,19 +759,22 @@ class OpenGLWindow(Renderer):
         if button == 1:
             self._left_origin = position
             self._left_max_move = 0.0
+            self._begin_window_drag(position)
             self._attention_expression = Expression.HAPPY
             self._attention_until = time.monotonic() + 0.5
         elif button == 3:
-            self._begin_window_drag()
+            self._right_origin = position
 
     def _handle_mouse_up(self, button: int) -> bool:
         if button == 1 and self._left_origin is not None:
             poked = self._left_max_move < DRAG_THRESHOLD
             self._left_origin = None
-            self._squish_x = self._squish_y = 0.0
+            self._left_drag = None
+            self._drag_target_angle = 0.0
             return poked
-        if button == 3:
-            self._right_drag = None
+        if button == 3 and self._right_origin is not None:
+            self._right_origin = None
+            self._squish_x = self._squish_y = 0.0
         return False
 
     def _set_topmost(self, enable: bool) -> None:
@@ -724,24 +782,49 @@ class OpenGLWindow(Renderer):
         self._user.SetWindowPos(self._hwnd, hwnd_position, 0, 0, 0, 0, 0x1 | 0x2)
         self._always_on_top = enable
 
-    def _begin_window_drag(self) -> None:
-        cursor = _Point()
+    def _begin_window_drag(self, position: tuple[int, int]) -> None:
         window = _Rect()
-        self._user.GetCursorPos(ctypes.byref(cursor))
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        self._right_drag = (cursor.x, cursor.y, window.left, window.top)
+        cursor_x, cursor_y = window.left + position[0], window.top + position[1]
+        self._left_drag = (cursor_x, cursor_y, window.left, window.top)
+        self._left_grab = position
+        self._drag_last_cursor = (cursor_x, cursor_y)
+        self._drag_last_time = time.monotonic()
+        self._roam_velocity = (0.0, 0.0)
+        self._walk_kind = "idle"
 
-    def _move_window(self) -> None:
-        if self._right_drag is None:
+    def _move_window(self, position: tuple[int, int]) -> None:
+        if self._left_drag is None:
             return
-        cursor = _Point()
-        self._user.GetCursorPos(ctypes.byref(cursor))
-        start_x, start_y, window_x, window_y = self._right_drag
+        current = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(current))
+        cursor_x, cursor_y = current.left + position[0], current.top + position[1]
+        start_x, start_y, window_x, window_y = self._left_drag
+        self._left_max_move = max(
+            self._left_max_move,
+            math.hypot(cursor_x - start_x, cursor_y - start_y),
+        )
+        now = time.monotonic()
+        if self._drag_last_cursor is not None:
+            elapsed = max(now - self._drag_last_time, 0.001)
+            velocity_x = (cursor_x - self._drag_last_cursor[0]) / elapsed
+            target = _grab_angle(
+                self._left_grab,
+                (self._overlay_width, self._overlay_height)
+                if self._desktop_transparent else (self._width, self._height),
+                velocity_x,
+            )
+            previous = self._drag_angle
+            self._drag_target_angle = target
+            self._drag_angle += (target - self._drag_angle) * 0.42
+            self._drag_angular_velocity = (self._drag_angle - previous) / elapsed
+        self._drag_last_cursor = (cursor_x, cursor_y)
+        self._drag_last_time = now
         self._user.SetWindowPos(
             self._hwnd,
             0,
-            window_x + cursor.x - start_x,
-            window_y + cursor.y - start_y,
+            window_x + cursor_x - start_x,
+            window_y + cursor_y - start_y,
             0,
             0,
             0x1 | 0x4,
@@ -752,7 +835,7 @@ class OpenGLWindow(Renderer):
         now = time.monotonic()
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
-        if self._right_drag is not None or self._left_origin is not None:
+        if self._left_drag is not None or self._right_origin is not None:
             return
 
         if self._snack_target is not None:
@@ -999,16 +1082,32 @@ class OpenGLWindow(Renderer):
         return math.sin(math.pi * progress)
 
     def _update_squish(self, position: tuple[int, int]) -> None:
-        if self._left_origin is None:
+        if self._right_origin is None:
             return
-        start_x, start_y = self._left_origin
+        start_x, start_y = self._right_origin
         x, y = position
         dx, dy = x - start_x, y - start_y
         self._left_max_move = max(self._left_max_move, (dx * dx + dy * dy) ** 0.5)
 
         self._squish_x, self._squish_y = _squish_from_drag(
-            self._left_origin, position, (self._width, self._height)
+            self._right_origin,
+            position,
+            (self._overlay_width, self._overlay_height)
+            if self._desktop_transparent else (self._width, self._height),
         )
+
+    def _update_drag_physics(self) -> None:
+        now = time.monotonic()
+        dt = min(now - self._drag_physics_time, 0.05)
+        self._drag_physics_time = now
+        if self._left_drag is not None:
+            self._drag_angle += (self._drag_target_angle - self._drag_angle) * min(1.0, dt * 12.0)
+            return
+        acceleration = -self._drag_angle * 20.0 - self._drag_angular_velocity * 7.5
+        self._drag_angular_velocity += acceleration * dt
+        self._drag_angle += self._drag_angular_velocity * dt
+        if abs(self._drag_angle) < 0.08 and abs(self._drag_angular_velocity) < 0.08:
+            self._drag_angle = self._drag_angular_velocity = 0.0
 
     def pump_events(self) -> FrameInput:
         quit_ = poked = False
@@ -1021,10 +1120,10 @@ class OpenGLWindow(Renderer):
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 self._handle_mouse_down(event.button, event.pos)
             elif event.type == pygame.MOUSEMOTION:
-                if self._left_origin is not None:
+                if self._left_drag is not None:
+                    self._move_window(event.pos)
+                if self._right_origin is not None:
                     self._update_squish(event.pos)
-                if self._right_drag is not None:
-                    self._move_window()
             elif event.type == pygame.MOUSEBUTTONUP:
                 poked = self._handle_mouse_up(event.button) or poked
 
@@ -1036,10 +1135,10 @@ class OpenGLWindow(Renderer):
             elif kind == "right_down":
                 self._handle_mouse_down(3, payload)
             elif kind == "move":
-                if self._left_origin is not None:
+                if self._left_drag is not None:
+                    self._move_window(payload)
+                if self._right_origin is not None:
                     self._update_squish(payload)
-                if self._right_drag is not None:
-                    self._move_window()
             elif kind == "left_up":
                 poked = self._handle_mouse_up(1) or poked
             elif kind == "right_up":
@@ -1054,10 +1153,13 @@ class OpenGLWindow(Renderer):
         )
 
     def render(self, intent: PetIntent) -> None:
+        self._update_drag_physics()
         # Only the true-alpha desktop overlay is allowed to move itself.
         if self._desktop_transparent:
             self._wander()
-        if time.monotonic() < self._attention_until and not intent.squishing:
+        if self._left_drag is not None and not intent.squishing:
+            intent = replace(intent, expression=Expression.UNIMPRESSED)
+        elif time.monotonic() < self._attention_until and not intent.squishing:
             intent = replace(intent, expression=self._attention_expression)
         if self._is_inspecting() and not self._inspection_squeaked and self._poke_sounds:
             random.choice(self._poke_sounds).play()
@@ -1089,17 +1191,22 @@ class OpenGLWindow(Renderer):
         glBindTexture(GL_TEXTURE_2D, self._texture_for(intent))
 
         left, top, width, height = self._sprite_layout(intent)
-        right, bottom = left + width, top + height
+        fit = _rotation_fit(width, height, self._drag_angle, (self._width, self._height))
+        if fit < 1.0:
+            center_x, center_y = left + width / 2, top + height / 2
+            width, height = width * fit, height * fit
+            left, top = center_x - width / 2, center_y - height / 2
+        corners = _rotated_quad(left, top, width, height, self._drag_angle)
 
         glBegin(GL_QUADS)
         glTexCoord2f(0, 0)
-        glVertex2f(left, top)
+        glVertex2f(*corners[0])
         glTexCoord2f(1, 0)
-        glVertex2f(right, top)
+        glVertex2f(*corners[1])
         glTexCoord2f(1, 1)
-        glVertex2f(right, bottom)
+        glVertex2f(*corners[2])
         glTexCoord2f(0, 1)
-        glVertex2f(left, bottom)
+        glVertex2f(*corners[3])
         glEnd()
 
         pygame.display.flip()

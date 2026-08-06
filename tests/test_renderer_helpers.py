@@ -5,9 +5,12 @@ import pygame
 
 from render.opengl_window import (
     _clean_transparent_edge,
+    _grab_angle,
     _jump_motion,
     _normalize,
     _perspective_scale,
+    _rotated_quad,
+    _rotation_fit,
     _squish_from_drag,
     _walk_offset,
     _walk_speed_scale,
@@ -15,6 +18,24 @@ from render.opengl_window import (
 
 
 class RendererHelperTests(unittest.TestCase):
+    def test_hair_grab_swings_opposite_horizontal_drag(self):
+        self.assertGreater(_grab_angle((150, 40), (300, 600), 500.0), 0.0)
+        self.assertLess(_grab_angle((150, 40), (300, 600), -500.0), 0.0)
+
+    def test_leg_grab_flips_the_sprite(self):
+        self.assertGreater(abs(_grab_angle((40, 590), (300, 600), 0.0)), 170.0)
+
+    def test_rotated_quad_keeps_its_center(self):
+        corners = _rotated_quad(10, 20, 100, 200, 37.0)
+        center_x = sum(point[0] for point in corners) / 4
+        center_y = sum(point[1] for point in corners) / 4
+        self.assertAlmostEqual(center_x, 60.0)
+        self.assertAlmostEqual(center_y, 120.0)
+
+    def test_sideways_sprite_is_scaled_to_fit_its_canvas(self):
+        self.assertAlmostEqual(_rotation_fit(300, 600, 90, (300, 600)), 0.5)
+        self.assertAlmostEqual(_rotation_fit(300, 600, 180, (300, 600)), 1.0)
+
     def test_translucent_sprite_edges_do_not_keep_white_rgb(self):
         surface = pygame.Surface((2, 1), pygame.SRCALPHA)
         surface.set_at((0, 0), (255, 255, 255, 128))
