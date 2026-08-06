@@ -64,6 +64,9 @@ WM_LBUTTONUP = 0x0202
 WM_RBUTTONDOWN = 0x0204
 WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
+CURSOR_NOTICE_DISTANCE = 520
+SCREEN_EDGE_DISTANCE = 36
+JUMP_DURATION = 0.6
 
 
 def _normalize(name: str) -> str:
@@ -99,6 +102,18 @@ def _walk_offset(walking: bool, seconds: float) -> tuple[float, float]:
 def _walk_speed_scale(seconds: float) -> float:
     """Match forward motion to the gait so he moves in visible little steps."""
     return 0.45 + 0.55 * abs(math.sin(seconds * 11.0))
+
+
+def _perspective_scale(window_bottom: int, monitor_top: int, monitor_bottom: int) -> float:
+    """Map vertical position to depth: higher on a display means farther away."""
+    depth = (window_bottom - monitor_top) / max(monitor_bottom - monitor_top, 1)
+    return 0.62 + 0.38 * max(0.0, min(1.0, depth))
+
+
+def _jump_motion(progress: float) -> tuple[float, float, float, float]:
+    """Return a small airborne arc and stretch for a monitor-to-monitor leap."""
+    arc = math.sin(math.pi * max(0.0, min(1.0, progress)))
+    return 0.0, -72.0 * arc, 1.0 - 0.12 * arc, 1.0 + 0.10 * arc
 
 
 class _Point(ctypes.Structure):
@@ -159,6 +174,11 @@ class _WindowClass(ctypes.Structure):
     ]
 
 
+_MonitorEnumProc = ctypes.WINFUNCTYPE(
+    wintypes.BOOL, wintypes.HANDLE, wintypes.HDC, ctypes.POINTER(_Rect), wintypes.LPARAM
+)
+
+
 class OpenGLWindow(Renderer):
     def __init__(self, assets_dir: Path):
         self._settings_path = assets_dir.parent / "settings.json"
@@ -217,7 +237,13 @@ class OpenGLWindow(Renderer):
         self._right_drag: tuple[int, int, int, int] | None = None
         self._roam_remaining = random.uniform(12.0, 24.0)
         self._roam_velocity = (0.0, 0.0)
+        self._walk_kind = "idle"
         self._last_roam_time = time.monotonic()
+        self._cursor_next_check = self._last_roam_time
+        self._jump_target: tuple[int, int] | None = None
+        self._jump_started = 0.0
+        self._monitors: list[_Rect] = []
+        self._next_monitor_refresh = 0.0
 
         try:
             if pygame.mixer.get_init() is None:
@@ -248,6 +274,9 @@ class OpenGLWindow(Renderer):
         ] * 4 + [ctypes.c_uint]
         self._user.GetCursorPos.argtypes = [ctypes.POINTER(_Point)]
         self._user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_Rect)]
+        self._user.EnumDisplayMonitors.argtypes = [
+            wintypes.HDC, ctypes.POINTER(_Rect), _MonitorEnumProc, wintypes.LPARAM
+        ]
         self._user.CreateWindowExW.argtypes = [
             ctypes.c_uint, wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_uint,
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -450,18 +479,35 @@ class OpenGLWindow(Renderer):
             self._gdi.DeleteDC(self._layered_dc)
         self._layered_dc = self._layered_bitmap = self._layered_previous = self._layered_bits = None
 
+    def _sprite_layout(self, intent: PetIntent) -> tuple[float, float, float, float]:
+        """Place the sprite on a shared ground line for normal and alpha rendering."""
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        monitor = self._monitor_for_window(window, self._monitor_rects())
+        perspective = (
+            _perspective_scale(window.bottom, monitor.top, monitor.bottom)
+            if monitor is not None
+            else 1.0
+        )
+        width_scale = (1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y) * perspective
+        height_scale = (1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x) * perspective
+        if self._is_jumping():
+            sway, bob, jump_width, jump_height = _jump_motion(self._jump_progress())
+            width_scale *= jump_width
+            height_scale *= jump_height
+        else:
+            sway, bob = _walk_offset(self._is_walking(), time.monotonic())
+        width = self._width * width_scale
+        height = self._height * height_scale
+        return (self._width - width) / 2 + sway, self._height - height + bob, width, height
+
     def _render_layered(self, intent: PetIntent) -> None:
         sprite = self._surface_for(intent)
-        width_scale = 1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y
-        height_scale = 1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x
-        width, height = round(self._width * width_scale), round(self._height * height_scale)
+        left, top, width, height = self._sprite_layout(intent)
+        width, height = round(width), round(height)
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._width, self._height), pygame.SRCALPHA, 32)
-        sway, bob = _walk_offset(self._is_walking(), time.monotonic())
-        frame.blit(sprite, (
-            round((self._width - width) / 2 + sway),
-            round((self._height - height) / 2 + bob),
-        ))
+        frame.blit(sprite, (round(left), round(top)))
         pixels = pygame.image.tostring(frame.premul_alpha(), "BGRA", False)
         ctypes.memmove(self._layered_bits, pixels, len(pixels))
 
@@ -567,58 +613,156 @@ class OpenGLWindow(Renderer):
         )
 
     def _wander(self) -> None:
-        """Occasionally take a short walk in a random on-screen direction."""
+        """Choose among idle wandering, short cursor steps, and screen jumps."""
         now = time.monotonic()
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
         if self._right_drag is not None or self._left_origin is not None:
             return
 
+        if self._is_jumping():
+            if self._jump_progress(now) >= 1.0:
+                target_x, target_y = self._jump_target
+                self._user.SetWindowPos(self._hwnd, 0, target_x, target_y, 0, 0, 0x1 | 0x4)
+                self._jump_target = None
+                self._roam_velocity = (0.0, 0.0)
+                self._walk_kind = "idle"
+                self._roam_remaining = random.uniform(1.0, 3.0)
+            return
+
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        if not self._is_walking() and self._try_cursor_step(window, now):
+            return
+
         self._roam_remaining -= dt
         if self._roam_remaining <= 0.0:
             if self._is_walking():
-                # Rest long enough that Pikita feels alive, not restless.
                 self._roam_velocity = (0.0, 0.0)
-                self._roam_remaining = random.uniform(14.0, 30.0)
+                self._roam_remaining = (
+                    random.uniform(0.45, 1.0)
+                    if self._walk_kind == "cursor"
+                    else random.uniform(14.0, 30.0)
+                )
+                self._walk_kind = "idle"
             else:
                 self._begin_walk()
 
         if not self._is_walking():
             return
 
-        window = _Rect()
-        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        monitors = self._monitor_rects()
+        monitor = self._monitor_for_window(window, monitors)
+        if monitor is None:
+            return
+        if self._try_begin_screen_jump(window, monitor, monitors):
+            return
+
         window_width = window.right - window.left
         window_height = window.bottom - window.top
         velocity_x, velocity_y = self._roam_velocity
         stride = dt * _walk_speed_scale(now)
         next_x = round(window.left + velocity_x * stride)
         next_y = round(window.top + velocity_y * stride)
-        # Keep him on the virtual desktop, even on a multi-monitor setup.
-        left = self._user.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
-        width = self._user.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
-        top = self._user.GetSystemMetrics(77)  # SM_YVIRTUALSCREEN
-        height = self._user.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
-        max_x = left + width - window_width
-        max_y = top + height - window_height
-        next_x = max(left, min(max_x, next_x))
-        next_y = max(top, min(max_y, next_y))
-        if next_x in (left, max_x):
+        max_x = monitor.right - window_width
+        max_y = monitor.bottom - window_height
+        next_x = max(monitor.left, min(max_x, next_x))
+        next_y = max(monitor.top, min(max_y, next_y))
+        if next_x in (monitor.left, max_x):
             velocity_x *= -1
-        if next_y in (top, max_y):
+        if next_y in (monitor.top, max_y):
             velocity_y *= -1
         self._roam_velocity = (velocity_x, velocity_y)
         self._user.SetWindowPos(self._hwnd, 0, next_x, next_y, 0, 0, 0x1 | 0x4)
 
-    def _begin_walk(self) -> None:
+    def _try_cursor_step(self, window: _Rect, now: float) -> bool:
+        if now < self._cursor_next_check:
+            return False
+        self._cursor_next_check = now + random.uniform(0.35, 0.8)
+        cursor = _Point()
+        self._user.GetCursorPos(ctypes.byref(cursor))
+        center_x = (window.left + window.right) / 2
+        center_y = (window.top + window.bottom) / 2
+        dx, dy = cursor.x - center_x, cursor.y - center_y
+        distance = math.hypot(dx, dy)
+        if not 24.0 < distance <= CURSOR_NOTICE_DISTANCE:
+            return False
+        self._begin_walk("cursor", math.atan2(dy, dx), random.uniform(0.45, 0.85))
+        return True
+
+    def _begin_walk(
+        self,
+        kind: str = "wander",
+        direction: float | None = None,
+        duration: float | None = None,
+    ) -> None:
         """Take a few brisk, weighty steps before settling again."""
-        direction = random.uniform(0.0, math.tau)
+        direction = random.uniform(0.0, math.tau) if direction is None else direction
         speed = random.uniform(100.0, 135.0)
         self._roam_velocity = (math.cos(direction) * speed, math.sin(direction) * speed)
-        self._roam_remaining = random.uniform(2.0, 4.5)
+        self._roam_remaining = random.uniform(2.0, 4.5) if duration is None else duration
+        self._walk_kind = kind
+
+    def _monitor_rects(self) -> list[_Rect]:
+        if self._monitors and time.monotonic() < self._next_monitor_refresh:
+            return self._monitors
+        monitors: list[_Rect] = []
+
+        def collect(_monitor, _dc, rect, _data) -> bool:
+            source = rect.contents
+            monitors.append(_Rect(source.left, source.top, source.right, source.bottom))
+            return True
+
+        callback = _MonitorEnumProc(collect)
+        self._user.EnumDisplayMonitors(None, None, callback, 0)
+        self._monitors = monitors
+        self._next_monitor_refresh = time.monotonic() + 2.0
+        return self._monitors
+
+    @staticmethod
+    def _monitor_for_window(window: _Rect, monitors: list[_Rect]) -> _Rect | None:
+        center_x = (window.left + window.right) / 2
+        center_y = (window.top + window.bottom) / 2
+        for monitor in monitors:
+            if monitor.left <= center_x < monitor.right and monitor.top <= center_y < monitor.bottom:
+                return monitor
+        return None
+
+    def _try_begin_screen_jump(
+        self, window: _Rect, monitor: _Rect, monitors: list[_Rect]
+    ) -> bool:
+        velocity_x, velocity_y = self._roam_velocity
+        width = window.right - window.left
+        height = window.bottom - window.top
+        for other in monitors:
+            if other is monitor:
+                continue
+            if velocity_x < 0 and window.left - monitor.left <= SCREEN_EDGE_DISTANCE and abs(other.right - monitor.left) <= 2:
+                target = (other.right - width - 12, max(other.top, min(other.bottom - height, window.top)))
+            elif velocity_x > 0 and monitor.right - window.right <= SCREEN_EDGE_DISTANCE and abs(other.left - monitor.right) <= 2:
+                target = (other.left + 12, max(other.top, min(other.bottom - height, window.top)))
+            elif velocity_y < 0 and window.top - monitor.top <= SCREEN_EDGE_DISTANCE and abs(other.bottom - monitor.top) <= 2:
+                target = (max(other.left, min(other.right - width, window.left)), other.bottom - height - 12)
+            elif velocity_y > 0 and monitor.bottom - window.bottom <= SCREEN_EDGE_DISTANCE and abs(other.top - monitor.bottom) <= 2:
+                target = (max(other.left, min(other.right - width, window.left)), other.top + 12)
+            else:
+                continue
+            self._jump_target = target
+            self._jump_started = time.monotonic()
+            self._walk_kind = "jump"
+            return True
+        return False
+
+    def _is_jumping(self) -> bool:
+        return self._jump_target is not None
+
+    def _jump_progress(self, now: float | None = None) -> float:
+        if not self._is_jumping():
+            return 0.0
+        return min(1.0, ((time.monotonic() if now is None else now) - self._jump_started) / JUMP_DURATION)
 
     def _is_walking(self) -> bool:
-        return self._roam_velocity != (0.0, 0.0)
+        return self._roam_velocity != (0.0, 0.0) and not self._is_jumping()
 
     def _update_squish(self, position: tuple[int, int]) -> None:
         if self._left_origin is None:
@@ -698,13 +842,7 @@ class OpenGLWindow(Renderer):
         glClear(GL_COLOR_BUFFER_BIT)
         glBindTexture(GL_TEXTURE_2D, self._texture_for(intent))
 
-        width_scale = 1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y
-        height_scale = 1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x
-        width = self._width * width_scale
-        height = self._height * height_scale
-        sway, bob = _walk_offset(self._is_walking(), time.monotonic())
-        left = (self._width - width) / 2 + sway
-        top = (self._height - height) / 2 + bob
+        left, top, width, height = self._sprite_layout(intent)
         right, bottom = left + width, top + height
 
         glBegin(GL_QUADS)

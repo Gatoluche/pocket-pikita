@@ -1,7 +1,14 @@
 import math
 import unittest
 
-from render.opengl_window import _normalize, _squish_from_drag, _walk_offset, _walk_speed_scale
+from render.opengl_window import (
+    _jump_motion,
+    _normalize,
+    _perspective_scale,
+    _squish_from_drag,
+    _walk_offset,
+    _walk_speed_scale,
+)
 
 
 class RendererHelperTests(unittest.TestCase):
@@ -32,6 +39,15 @@ class RendererHelperTests(unittest.TestCase):
 
     def test_walk_speed_pulses_with_the_gait(self):
         self.assertLess(_walk_speed_scale(0.0), _walk_speed_scale(math.pi / 22))
+
+    def test_perspective_makes_the_top_of_a_screen_feel_farther_away(self):
+        self.assertLess(_perspective_scale(600, 0, 1440), _perspective_scale(1400, 0, 1440))
+
+    def test_jump_motion_leaves_the_ground_mid_jump(self):
+        _, bob, width, height = _jump_motion(0.5)
+        self.assertLess(bob, 0.0)
+        self.assertLess(width, 1.0)
+        self.assertGreater(height, 1.0)
 
 
 if __name__ == "__main__":
