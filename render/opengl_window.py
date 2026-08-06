@@ -192,6 +192,13 @@ def _point_at_sprite_ratio(
     return _rotate_screen_point(point, center, angle)
 
 
+def _grounded_canvas_origin(
+    sprite_center_x: float, sprite_bottom: float, canvas_width: int, canvas_height: int
+) -> tuple[int, int]:
+    """Place a replacement canvas without moving Pikita's feet or center line."""
+    return round(sprite_center_x - canvas_width / 2), round(sprite_bottom - canvas_height)
+
+
 def _perspective_scale(sprite_top: int, monitor_top: int, monitor_bottom: int) -> float:
     """Map Pikita's visible top to depth, with his original size at screen center."""
     midpoint = (monitor_top + monitor_bottom) / 2
@@ -337,9 +344,11 @@ class OpenGLWindow(Renderer):
         self._left_grab = (self._width // 2, self._height // 3)
         self._left_grab_ratio = (0.5, 1 / 3)
         self._drag_cursor: tuple[int, int] | None = None
+        self._drag_release_pending = False
         self._last_sprite_rect = (0.0, 0.0, float(self._width), float(self._height))
         self._drag_last_cursor: tuple[int, int] | None = None
         self._drag_last_time = time.monotonic()
+        self._drag_release_pause_until = self._drag_last_time
         self._drag_velocity_x = 0.0
         self._drag_angle = 0.0
         self._drag_target_angle = 0.0
@@ -620,15 +629,17 @@ class OpenGLWindow(Renderer):
             self._gdi.DeleteDC(self._layered_dc)
         self._layered_dc = self._layered_bitmap = self._layered_previous = self._layered_bits = None
 
-    def _update_overlay_scale(self) -> None:
+    def _update_overlay_scale(self, intent: PetIntent) -> None:
         """Resize the alpha canvas from Pikita's visible top as he changes depth."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        sprite_top = window.top + (self._overlay_height - self._overlay_sprite_height) / 2
+        # Layered sprites sit on the canvas floor; using centered padding here
+        # made a rotating canvas look as though Pikita had jumped upward.
+        sprite_top = window.top + self._overlay_height - self._overlay_sprite_height
         sprite_rect = _Rect(
-            window.left,
+            round(window.left + (self._overlay_width - self._overlay_sprite_width) / 2),
             round(sprite_top),
-            window.right,
+            round(window.left + (self._overlay_width + self._overlay_sprite_width) / 2),
             round(sprite_top + self._overlay_sprite_height),
         )
         monitor = self._monitor_for_sprite_top(sprite_rect, self._monitor_rects())
@@ -662,15 +673,30 @@ class OpenGLWindow(Renderer):
         self._overlay_sprite_width, self._overlay_sprite_height = sprite_width, sprite_height
         if not canvas_changed:
             return
-        center_x = (window.left + window.right) / 2
-        center_y = (window.top + window.bottom) / 2
+        sprite_center_x = (window.left + window.right) / 2
+        sprite_bottom = window.top + self._overlay_height
         self._destroy_layered_buffer()
         self._overlay_width, self._overlay_height = width, height
+        x, y = _grounded_canvas_origin(sprite_center_x, sprite_bottom, width, height)
+        if self._left_drag is not None and self._drag_cursor is not None:
+            # A new rotation canvas is positioned from the grab itself. This
+            # avoids a one-frame visit to its expanded top-left corner.
+            sprite_rect = (
+                (width - sprite_width) / 2,
+                height - sprite_height,
+                sprite_width,
+                sprite_height,
+            )
+            grabbed = _point_at_sprite_ratio(
+                self._left_grab_ratio, sprite_rect, self._drag_angle
+            )
+            x = round(self._drag_cursor[0] - grabbed[0])
+            y = round(self._drag_cursor[1] - grabbed[1])
         self._user.SetWindowPos(
             self._hwnd,
             0,
-            round(center_x - width / 2),
-            round(center_y - height / 2),
+            x,
+            y,
             width,
             height,
             0x4,
@@ -848,6 +874,7 @@ class OpenGLWindow(Renderer):
             self._left_origin = None
             self._left_drag = None
             self._drag_cursor = None
+            self._drag_release_pending = True
             self._drag_target_angle = 0.0
             return poked
         if button == 3 and self._right_origin is not None:
@@ -879,8 +906,10 @@ class OpenGLWindow(Renderer):
         self._drag_physics_time = now
         self._drag_velocity_x = 0.0
         self._drag_angular_velocity = 0.0
+        self._drag_release_pending = False
         self._roam_velocity = (0.0, 0.0)
         self._walk_kind = "idle"
+        self._snack_target = None
         self._jump_target = self._jump_origin = self._peek_target = None
 
     def _client_to_screen(self, position: tuple[int, int]) -> tuple[int, int]:
@@ -957,6 +986,7 @@ class OpenGLWindow(Renderer):
         if (
             self._left_drag is not None
             or self._right_origin is not None
+            or now < self._drag_release_pause_until
             or abs(self._drag_angle) >= DRAG_REST_ANGLE
             or abs(self._drag_angular_velocity) >= DRAG_REST_SPEED
         ):
@@ -1253,6 +1283,12 @@ class OpenGLWindow(Renderer):
             and abs(self._drag_angular_velocity) < DRAG_REST_SPEED
         ):
             self._drag_angle = self._drag_angular_velocity = 0.0
+            if self._drag_release_pending:
+                # Let the sprite visibly settle before its normal curiosity
+                # routines can choose another walk or icon target.
+                self._drag_release_pending = False
+                self._drag_release_pause_until = now + random.uniform(1.2, 2.0)
+                self._roam_remaining = random.uniform(4.0, 8.0)
 
     def pump_events(self) -> FrameInput:
         quit_ = poked = False
@@ -1326,7 +1362,7 @@ class OpenGLWindow(Renderer):
             self._held_channel = None
 
         if self._desktop_transparent:
-            self._update_overlay_scale()
+            self._update_overlay_scale(intent)
             self._anchor_dragged_sprite(intent)
             self._render_layered(intent)
             self._clock.tick(FPS)

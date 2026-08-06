@@ -5,6 +5,7 @@ import pygame
 
 from render.opengl_window import (
     _clean_transparent_edge,
+    _grounded_canvas_origin,
     _grab_angle,
     _jump_motion,
     _normalize,
@@ -38,6 +39,11 @@ class RendererHelperTests(unittest.TestCase):
         width, height = _rotated_bounds(300, 600, 90)
         self.assertAlmostEqual(width, 600.0)
         self.assertAlmostEqual(height, 300.0)
+
+    def test_replacing_the_rotation_canvas_keeps_pikitas_feet_in_place(self):
+        left, top = _grounded_canvas_origin(700.0, 920.0, 1036, 1036)
+        self.assertEqual(left + 1036 / 2, 700.0)
+        self.assertEqual(top + 1036, 920.0)
 
     def test_rotated_grab_point_round_trips_to_the_same_sprite_position(self):
         sprite_rect = (200.0, 100.0, 300.0, 600.0)
