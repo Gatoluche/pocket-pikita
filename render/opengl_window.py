@@ -76,6 +76,16 @@ def _normalize(name: str) -> str:
     return name.removesuffix(".png").replace(" ", "").lower()
 
 
+def _clean_transparent_edge(surface: pygame.Surface) -> pygame.Surface:
+    """Replace white RGB hidden in translucent silhouette pixels with black."""
+    pixels = bytearray(pygame.image.tostring(surface, "RGBA", False))
+    for offset in range(0, len(pixels), 4):
+        alpha = pixels[offset + 3]
+        if alpha < 255:
+            pixels[offset : offset + 3] = b"\x00\x00\x00"
+    return pygame.image.frombuffer(bytes(pixels), surface.get_size(), "RGBA").copy()
+
+
 def _squish_from_drag(
     start: tuple[int, int], current: tuple[int, int], size: tuple[int, int]
 ) -> tuple[float, float]:
@@ -230,7 +240,9 @@ class OpenGLWindow(Renderer):
         self._textures: dict[str, int] = {}
         self._surfaces: dict[str, pygame.Surface] = {}
         for png in pngs:
-            surface = pygame.image.load(str(png)).convert_alpha()
+            surface = _clean_transparent_edge(
+                pygame.image.load(str(png)).convert_alpha()
+            )
             key = _normalize(png.name)
             self._surfaces[key] = surface
             # Keep the original for the layered window. Enlarging an already

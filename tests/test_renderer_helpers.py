@@ -1,7 +1,10 @@
 import math
 import unittest
 
+import pygame
+
 from render.opengl_window import (
+    _clean_transparent_edge,
     _jump_motion,
     _normalize,
     _perspective_scale,
@@ -12,6 +15,16 @@ from render.opengl_window import (
 
 
 class RendererHelperTests(unittest.TestCase):
+    def test_translucent_sprite_edges_do_not_keep_white_rgb(self):
+        surface = pygame.Surface((2, 1), pygame.SRCALPHA)
+        surface.set_at((0, 0), (255, 255, 255, 128))
+        surface.set_at((1, 0), (255, 255, 255, 255))
+
+        cleaned = _clean_transparent_edge(surface)
+
+        self.assertEqual(cleaned.get_at((0, 0)), (0, 0, 0, 128))
+        self.assertEqual(cleaned.get_at((1, 0)), (255, 255, 255, 255))
+
     def test_asset_names_are_normalized(self):
         self.assertEqual(_normalize("Sad + Speak.png"), "sad+speak")
 
