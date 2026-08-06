@@ -1,7 +1,7 @@
 import math
 import unittest
 
-from render.opengl_window import _normalize, _squish_from_drag, _walk_offset
+from render.opengl_window import _normalize, _squish_from_drag, _walk_offset, _walk_speed_scale
 
 
 class RendererHelperTests(unittest.TestCase):
@@ -29,6 +29,9 @@ class RendererHelperTests(unittest.TestCase):
         sway, bob = _walk_offset(True, math.pi / 22)
         self.assertGreater(sway, 0.0)
         self.assertLess(bob, 0.0)
+
+    def test_walk_speed_pulses_with_the_gait(self):
+        self.assertLess(_walk_speed_scale(0.0), _walk_speed_scale(math.pi / 22))
 
 
 if __name__ == "__main__":

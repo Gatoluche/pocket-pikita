@@ -2,7 +2,6 @@
 
 import ctypes
 import json
-from array import array
 from ctypes import wintypes
 import math
 from pathlib import Path
@@ -95,6 +94,11 @@ def _walk_offset(walking: bool, seconds: float) -> tuple[float, float]:
         return 0.0, 0.0
     step = math.sin(seconds * 11.0)
     return step * 9.0, -abs(step) * 11.0
+
+
+def _walk_speed_scale(seconds: float) -> float:
+    """Match forward motion to the gait so he moves in visible little steps."""
+    return 0.45 + 0.55 * abs(math.sin(seconds * 11.0))
 
 
 class _Point(ctypes.Structure):
@@ -218,17 +222,14 @@ class OpenGLWindow(Renderer):
         try:
             if pygame.mixer.get_init() is None:
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-            base_squeak = pygame.mixer.Sound(str(assets_dir / "Squeak.ogg"))
-            self._poke_sounds = [
-                base_squeak,
-                self._retime_sound(base_squeak, 0.84),
-                self._retime_sound(base_squeak, 1.18),
-            ]
-            self._held_squeak = self._pad_sound(base_squeak, 0.45)
+            squeak_paths = [assets_dir / "Squeak.ogg", *sorted(assets_dir.glob("Squeak_*.mp3"))]
+            # These are distinct recordings, not pitch-shifted copies of one file.
+            self._poke_sounds = [pygame.mixer.Sound(str(path)) for path in squeak_paths]
+            self._held_squeaks = [self._pad_sound(sound, 0.45) for sound in self._poke_sounds]
             self._held_channel: pygame.mixer.Channel | None = None
         except pygame.error:
             self._poke_sounds = []
-            self._held_squeak = None
+            self._held_squeaks = []
             self._held_channel = None
 
         if settings.get("desktop_transparent", False):
@@ -334,19 +335,6 @@ class OpenGLWindow(Renderer):
             data,
         )
         return texture
-
-    @staticmethod
-    def _retime_sound(sound: pygame.mixer.Sound, speed: float) -> pygame.mixer.Sound:
-        """Make a related pitch/tempo variant without adding outside audio."""
-        channels = pygame.mixer.get_init()[2]
-        samples = array("h")
-        samples.frombytes(sound.get_raw())
-        frame_count = len(samples) // channels
-        output = array("h")
-        for frame in range(max(1, round(frame_count / speed))):
-            source = min(frame_count - 1, int(frame * speed))
-            output.extend(samples[source * channels : (source + 1) * channels])
-        return pygame.mixer.Sound(buffer=output.tobytes())
 
     @staticmethod
     def _pad_sound(sound: pygame.mixer.Sound, silence_seconds: float) -> pygame.mixer.Sound:
@@ -530,8 +518,7 @@ class OpenGLWindow(Renderer):
             self._set_topmost(not self._always_on_top)
         elif key in (pygame.K_m, 0x4D):
             # M is a nudge: make him take a little walk right now.
-            self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(18.0, 32.0)
-            self._roam_remaining = random.uniform(2.0, 4.5)
+            self._begin_walk()
         return False
 
     def _handle_mouse_down(self, button: int, position: tuple[int, int]) -> None:
@@ -594,15 +581,14 @@ class OpenGLWindow(Renderer):
                 self._roam_velocity = 0.0
                 self._roam_remaining = random.uniform(14.0, 30.0)
             else:
-                self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(18.0, 32.0)
-                self._roam_remaining = random.uniform(2.0, 4.5)
+                self._begin_walk()
 
         if not self._roam_velocity:
             return
 
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        next_x = round(window.left + self._roam_velocity * dt)
+        next_x = round(window.left + self._roam_velocity * dt * _walk_speed_scale(now))
         # Keep him on the virtual desktop, even on a multi-monitor setup.
         left = self._user.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
         width = self._user.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
@@ -610,6 +596,11 @@ class OpenGLWindow(Renderer):
         if next_x in (left, left + width - self._width):
             self._roam_velocity *= -1
         self._user.SetWindowPos(self._hwnd, 0, next_x, window.top, 0, 0, 0x1 | 0x4)
+
+    def _begin_walk(self) -> None:
+        """Choose a long enough stride to read as an intentional little journey."""
+        self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(55.0, 78.0)
+        self._roam_remaining = random.uniform(5.0, 9.0)
 
     def _update_squish(self, position: tuple[int, int]) -> None:
         if self._left_origin is None:
@@ -672,10 +663,10 @@ class OpenGLWindow(Renderer):
             random.choice(self._poke_sounds).play()
 
         if intent.squishing:
-            if self._held_squeak is not None and (
+            if self._held_squeaks and (
                 self._held_channel is None or not self._held_channel.get_busy()
             ):
-                self._held_channel = self._held_squeak.play(loops=-1)
+                self._held_channel = random.choice(self._held_squeaks).play(loops=-1)
         elif self._held_channel is not None:
             self._held_channel.fadeout(100)
             self._held_channel = None
