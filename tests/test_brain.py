@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from pet.brain import BLINK_DURATION, MAX_GAP, REACTION_DURATION, SQUEAK_INTERVAL, Brain
+from pet.brain import BLINK_DURATION, MAX_GAP, REACTION_DURATION, Brain
 from pet.intent import Expression, Sound
 
 
@@ -23,15 +23,14 @@ class BrainTests(unittest.TestCase):
         self.assertEqual((second.expression, second.sound), (Expression.WINK, None))
         self.assertEqual(settled.expression, Expression.BASE)
 
-    def test_squishing_repeats_squeaks_on_a_timer(self):
+    def test_squishing_is_a_held_state_not_squeak_spam(self):
         brain = Brain()
         first = brain.update(0.01, squish_x=0.5)
-        quiet = brain.update(SQUEAK_INTERVAL / 2, squish_x=0.5)
-        next_squeak = brain.update(SQUEAK_INTERVAL, squish_x=0.5)
+        held = brain.update(1.0, squish_x=0.5)
 
-        self.assertEqual(first.sound, Sound.SQUEAK)
-        self.assertIsNone(quiet.sound)
-        self.assertEqual(next_squeak.sound, Sound.SQUEAK)
+        self.assertIsNone(first.sound)
+        self.assertTrue(first.squishing)
+        self.assertTrue(held.squishing)
         self.assertEqual(first.squish_x, 0.5)
 
 

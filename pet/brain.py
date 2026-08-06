@@ -7,7 +7,6 @@ from pet.intent import Expression, PetIntent, Sound
 BLINK_DURATION = 0.12         # how long the eyes stay shut, in seconds
 MIN_GAP, MAX_GAP = 2.0, 5.0   # range between blinks, in seconds
 REACTION_DURATION = 0.6       # how long a poke reaction lasts, in seconds
-SQUEAK_INTERVAL = 0.14
 MIN_IDLE_GAP, MAX_IDLE_GAP = 7.0, 14.0
 IDLE_EXPRESSIONS = (Expression.SMUG, Expression.WINK, Expression.UNIMPRESSED)
 POKE_EXPRESSIONS = (Expression.HAPPY, Expression.WINK, Expression.BLUSH)
@@ -23,7 +22,6 @@ class Brain:
         self._idle_expression = Expression.BASE
         self._idle_timer = random.uniform(MIN_IDLE_GAP, MAX_IDLE_GAP)
         self._idle_remaining = 0.0
-        self._squeak_timer = 0.0
 
     def update(
         self,
@@ -43,18 +41,12 @@ class Brain:
 
         squishing = squish_x > 0.0 or squish_y > 0.0
         if squishing:
-            sound = None
-            self._squeak_timer -= dt
-            if self._squeak_timer <= 0.0:
-                sound = Sound.SQUEAK
-                self._squeak_timer = SQUEAK_INTERVAL
             return PetIntent(
                 expression=Expression.HAPPY,
-                sound=sound,
+                squishing=True,
                 squish_x=squish_x,
                 squish_y=squish_y,
             )
-        self._squeak_timer = 0.0
 
         if self._reacting > 0.0:
             self._reacting -= dt

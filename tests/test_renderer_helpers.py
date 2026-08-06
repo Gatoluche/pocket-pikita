@@ -16,6 +16,11 @@ class RendererHelperTests(unittest.TestCase):
         x, y = _squish_from_drag((150, 50), (150, 10), (300, 600))
         self.assertEqual((x, y), (0.0, 0.0))
 
+    def test_diagonal_inward_drag_squishes_both_axes(self):
+        x, y = _squish_from_drag((20, 80), (80, 180), (300, 600))
+        self.assertGreater(x, 0.0)
+        self.assertGreater(y, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

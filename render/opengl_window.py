@@ -2,8 +2,10 @@
 
 import ctypes
 import json
+from array import array
 from ctypes import wintypes
 from pathlib import Path
+import random
 
 import pygame
 from OpenGL.GL import (
@@ -64,11 +66,13 @@ def _squish_from_drag(
     center_x, center_y = size[0] / 2, size[1] / 2
     from_center_x = start_x - center_x
     from_center_y = start_y - center_y
-    if abs(from_center_x) > abs(from_center_y):
-        inward = abs(from_center_x) - abs(x - center_x)
-        return max(0.0, min(1.0, inward / max(abs(from_center_x), 1))), 0.0
-    inward = abs(from_center_y) - abs(y - center_y)
-    return 0.0, max(0.0, min(1.0, inward / max(abs(from_center_y), 1)))
+    # Each axis is independent, so a diagonal pull produces a diagonal squish.
+    inward_x = abs(from_center_x) - abs(x - center_x)
+    inward_y = abs(from_center_y) - abs(y - center_y)
+    return (
+        max(0.0, min(1.0, inward_x / max(abs(from_center_x), 1))),
+        max(0.0, min(1.0, inward_y / max(abs(from_center_y), 1))),
+    )
 
 
 class _DwmBlurBehind(ctypes.Structure):
@@ -97,6 +101,7 @@ class OpenGLWindow(Renderer):
     def __init__(self, assets_dir: Path):
         self._settings_path = assets_dir.parent / "settings.json"
         settings = self._load_settings()
+        pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_ALPHA_SIZE, 8)
 
@@ -141,20 +146,27 @@ class OpenGLWindow(Renderer):
         self._right_drag: tuple[int, int, int, int] | None = None
 
         try:
-            pygame.mixer.init()
-            self._sounds = {
-                Sound.SQUEAK: pygame.mixer.Sound(str(assets_dir / "Squeak.ogg"))
-            }
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            base_squeak = pygame.mixer.Sound(str(assets_dir / "Squeak.ogg"))
+            self._poke_sounds = [
+                base_squeak,
+                self._retime_sound(base_squeak, 0.84),
+                self._retime_sound(base_squeak, 1.18),
+            ]
+            self._held_squeak = self._pad_sound(base_squeak, 0.45)
+            self._held_channel: pygame.mixer.Channel | None = None
         except pygame.error:
-            self._sounds = {}
+            self._poke_sounds = []
+            self._held_squeak = None
+            self._held_channel = None
 
     def _configure_win32(self) -> None:
         self._dwm = ctypes.windll.dwmapi
         self._gdi = ctypes.windll.gdi32
         self._user = ctypes.windll.user32
         self._dwm.DwmEnableBlurBehindWindow.argtypes = [
-            wintypes.HWND,
-            ctypes.POINTER(_DwmBlurBehind),
+            wintypes.HWND, ctypes.POINTER(_DwmBlurBehind)
         ]
         self._dwm.DwmEnableBlurBehindWindow.restype = ctypes.c_long
         self._gdi.CreateRectRgn.argtypes = [ctypes.c_int] * 4
@@ -218,6 +230,26 @@ class OpenGLWindow(Renderer):
         )
         return texture
 
+    @staticmethod
+    def _retime_sound(sound: pygame.mixer.Sound, speed: float) -> pygame.mixer.Sound:
+        """Make a related pitch/tempo variant without adding outside audio."""
+        channels = pygame.mixer.get_init()[2]
+        samples = array("h")
+        samples.frombytes(sound.get_raw())
+        frame_count = len(samples) // channels
+        output = array("h")
+        for frame in range(max(1, round(frame_count / speed))):
+            source = min(frame_count - 1, int(frame * speed))
+            output.extend(samples[source * channels : (source + 1) * channels])
+        return pygame.mixer.Sound(buffer=output.tobytes())
+
+    @staticmethod
+    def _pad_sound(sound: pygame.mixer.Sound, silence_seconds: float) -> pygame.mixer.Sound:
+        """A squeak with breathing room makes a held loop feel deliberate."""
+        frequency, _, channels = pygame.mixer.get_init()
+        silence = b"\x00" * (round(frequency * silence_seconds) * channels * 2)
+        return pygame.mixer.Sound(buffer=sound.get_raw() + silence)
+
     def _texture_for(self, intent: PetIntent) -> int:
         expression = intent.expression.value
         candidates = []
@@ -239,19 +271,17 @@ class OpenGLWindow(Renderer):
         region = None
         if enable:
             region = self._gdi.CreateRectRgn(0, 0, -1, -1)
-            blur.dwFlags = 0x1 | 0x2  # enable + blur region
+            blur.dwFlags = 0x1 | 0x2
             blur.fEnable = 1
             blur.hRgnBlur = region
         else:
             blur.dwFlags = 0x1
             blur.fEnable = 0
-        result = self._dwm.DwmEnableBlurBehindWindow(
-            self._hwnd, ctypes.byref(blur)
-        )
+        result = self._dwm.DwmEnableBlurBehindWindow(self._hwnd, ctypes.byref(blur))
         if region:
             self._gdi.DeleteObject(region)
         if result != 0:
-            raise OSError(f"DWM transparency toggle failed: HRESULT {result}")
+            raise OSError(f"DWM blur setting failed: HRESULT {result}")
         self._desktop_transparent = enable
 
     def _set_topmost(self, enable: bool) -> None:
@@ -333,10 +363,17 @@ class OpenGLWindow(Renderer):
         )
 
     def render(self, intent: PetIntent) -> None:
-        if intent.sound is not None:
-            sound = self._sounds.get(intent.sound)
-            if sound is not None:
-                sound.play()
+        if intent.sound is Sound.SQUEAK and self._poke_sounds:
+            random.choice(self._poke_sounds).play()
+
+        if intent.squishing:
+            if self._held_squeak is not None and (
+                self._held_channel is None or not self._held_channel.get_busy()
+            ):
+                self._held_channel = self._held_squeak.play(loops=-1)
+        elif self._held_channel is not None:
+            self._held_channel.fadeout(100)
+            self._held_channel = None
 
         glClearColor(*BACKGROUND, 0.0)
         glClear(GL_COLOR_BUFFER_BIT)
@@ -366,6 +403,8 @@ class OpenGLWindow(Renderer):
 
     def shutdown(self) -> None:
         self._save_settings()
+        if self._held_channel is not None:
+            self._held_channel.stop()
         if self._desktop_transparent:
             self._set_desktop_transparency(False)
         glDeleteTextures(list(self._textures.values()))

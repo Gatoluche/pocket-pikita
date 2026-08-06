@@ -34,5 +34,6 @@ class PetIntent:
     talking: bool = False
     blinking: bool = False
     sound: Sound | None = None
+    squishing: bool = False
     squish_x: float = 0.0
     squish_y: float = 0.0
