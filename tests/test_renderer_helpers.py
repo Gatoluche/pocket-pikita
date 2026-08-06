@@ -10,7 +10,7 @@ from render.opengl_window import (
     _normalize,
     _perspective_scale,
     _rotated_quad,
-    _rotation_fit,
+    _rotated_bounds,
     _squish_from_drag,
     _walk_offset,
     _walk_speed_scale,
@@ -19,8 +19,8 @@ from render.opengl_window import (
 
 class RendererHelperTests(unittest.TestCase):
     def test_hair_grab_swings_opposite_horizontal_drag(self):
-        self.assertGreater(_grab_angle((150, 40), (300, 600), 500.0), 0.0)
-        self.assertLess(_grab_angle((150, 40), (300, 600), -500.0), 0.0)
+        self.assertLess(_grab_angle((150, 40), (300, 600), 500.0), 0.0)
+        self.assertGreater(_grab_angle((150, 40), (300, 600), -500.0), 0.0)
 
     def test_leg_grab_flips_the_sprite(self):
         self.assertGreater(abs(_grab_angle((40, 590), (300, 600), 0.0)), 170.0)
@@ -32,9 +32,10 @@ class RendererHelperTests(unittest.TestCase):
         self.assertAlmostEqual(center_x, 60.0)
         self.assertAlmostEqual(center_y, 120.0)
 
-    def test_sideways_sprite_is_scaled_to_fit_its_canvas(self):
-        self.assertAlmostEqual(_rotation_fit(300, 600, 90, (300, 600)), 0.5)
-        self.assertAlmostEqual(_rotation_fit(300, 600, 180, (300, 600)), 1.0)
+    def test_rotation_expands_canvas_without_resizing_sprite(self):
+        width, height = _rotated_bounds(300, 600, 90)
+        self.assertAlmostEqual(width, 600.0)
+        self.assertAlmostEqual(height, 300.0)
 
     def test_translucent_sprite_edges_do_not_keep_white_rgb(self):
         surface = pygame.Surface((2, 1), pygame.SRCALPHA)

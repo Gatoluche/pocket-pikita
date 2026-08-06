@@ -123,7 +123,8 @@ def _grab_angle(grab: tuple[int, int], size: tuple[int, int], velocity_x: float)
     width, height = size
     depth = max(0.0, min(1.0, (y / max(height, 1) - 0.62) / 0.28))
     inversion = (180.0 if x < width / 2 else -180.0) * depth
-    swing = max(-38.0, min(38.0, velocity_x * 0.075)) * (1.0 - depth)
+    # The body trails the grabbed point, so horizontal motion produces opposite torque.
+    swing = max(-38.0, min(38.0, -velocity_x * 0.075)) * (1.0 - depth)
     return inversion + swing
 
 
@@ -141,12 +142,12 @@ def _rotated_quad(
     return corners
 
 
-def _rotation_fit(width: float, height: float, angle: float, canvas: tuple[float, float]) -> float:
-    """Scale a rotated rectangle just enough to keep it inside its canvas."""
+def _rotated_bounds(width: float, height: float, angle: float) -> tuple[float, float]:
+    """Return the canvas dimensions needed by a rotated rectangle."""
     radians = math.radians(angle)
     bounds_width = abs(width * math.cos(radians)) + abs(height * math.sin(radians))
     bounds_height = abs(width * math.sin(radians)) + abs(height * math.cos(radians))
-    return min(1.0, canvas[0] / max(bounds_width, 1), canvas[1] / max(bounds_height, 1))
+    return bounds_width, bounds_height
 
 
 def _perspective_scale(sprite_top: int, monitor_top: int, monitor_bottom: int) -> float:
@@ -262,6 +263,8 @@ class OpenGLWindow(Renderer):
         self._layered_bits = None
         self._overlay_width = self._width
         self._overlay_height = self._height
+        self._overlay_sprite_width = self._width
+        self._overlay_sprite_height = self._height
         position = settings.get("position")
         if isinstance(position, list) and len(position) == 2:
             self._user.SetWindowPos(
@@ -530,6 +533,7 @@ class OpenGLWindow(Renderer):
             raise OSError(f"Could not create transparent window: {ctypes.get_last_error()}")
         self._overlay_hwnd = overlay
         self._overlay_width, self._overlay_height = self._width, self._height
+        self._overlay_sprite_width, self._overlay_sprite_height = self._width, self._height
         self._create_layered_buffer()
         self._user.ShowWindow(overlay, 4)  # SW_SHOWNOACTIVATE
 
@@ -571,22 +575,41 @@ class OpenGLWindow(Renderer):
         """Resize the alpha canvas from Pikita's visible top as he changes depth."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
+        sprite_top = window.top + (self._overlay_height - self._overlay_sprite_height) / 2
+        sprite_rect = _Rect(
+            window.left,
+            round(sprite_top),
+            window.right,
+            round(sprite_top + self._overlay_sprite_height),
+        )
+        monitor = self._monitor_for_sprite_top(sprite_rect, self._monitor_rects())
         if monitor is None:
             return
-        scale = _perspective_scale(window.top, monitor.top, monitor.bottom)
-        width = round(self._width * scale)
-        height = round(self._height * scale)
-        if width == self._overlay_width and height == self._overlay_height:
+        scale = _perspective_scale(round(sprite_top), monitor.top, monitor.bottom)
+        sprite_width = round(self._width * scale)
+        sprite_height = round(self._height * scale)
+        bounds_width, bounds_height = _rotated_bounds(
+            sprite_width, sprite_height, self._drag_angle
+        )
+        width = max(sprite_width, math.ceil(bounds_width))
+        height = max(sprite_height, math.ceil(bounds_height))
+        if (
+            width == self._overlay_width
+            and height == self._overlay_height
+            and sprite_width == self._overlay_sprite_width
+            and sprite_height == self._overlay_sprite_height
+        ):
             return
         center_x = (window.left + window.right) / 2
+        center_y = (window.top + window.bottom) / 2
         self._destroy_layered_buffer()
         self._overlay_width, self._overlay_height = width, height
+        self._overlay_sprite_width, self._overlay_sprite_height = sprite_width, sprite_height
         self._user.SetWindowPos(
             self._hwnd,
             0,
             round(center_x - width / 2),
-            window.top,
+            round(center_y - height / 2),
             width,
             height,
             0x4,
@@ -600,6 +623,8 @@ class OpenGLWindow(Renderer):
         monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
         canvas_width = self._overlay_width if self._desktop_transparent else self._width
         canvas_height = self._overlay_height if self._desktop_transparent else self._height
+        sprite_width = self._overlay_sprite_width if self._desktop_transparent else self._width
+        sprite_height = self._overlay_sprite_height if self._desktop_transparent else self._height
         # The overlay canvas owns depth. The framed preview is always fixed-size.
         perspective = 1.0
         width_scale = (1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y) * perspective
@@ -616,8 +641,8 @@ class OpenGLWindow(Renderer):
             sway, bob = _walk_offset(
                 self._is_walking(), time.monotonic(), self._walk_strength()
             )
-        width = canvas_width * width_scale
-        height = canvas_height * height_scale
+        width = sprite_width * width_scale
+        height = sprite_height * height_scale
         return (canvas_width - width) / 2 + sway, canvas_height - height + bob, width, height
 
     def _render_layered(self, intent: PetIntent) -> None:
@@ -628,16 +653,6 @@ class OpenGLWindow(Renderer):
         frame = pygame.Surface((self._overlay_width, self._overlay_height), pygame.SRCALPHA, 32)
         if abs(self._drag_angle) > 0.1:
             sprite = pygame.transform.rotate(sprite, self._drag_angle)
-            fit = min(
-                1.0,
-                self._overlay_width / max(sprite.get_width(), 1),
-                self._overlay_height / max(sprite.get_height(), 1),
-            )
-            if fit < 1.0:
-                sprite = pygame.transform.smoothscale(
-                    sprite,
-                    (round(sprite.get_width() * fit), round(sprite.get_height() * fit)),
-                )
             center = (round(left + width / 2), round(top + height / 2))
             frame.blit(sprite, sprite.get_rect(center=center))
         else:
@@ -799,18 +814,19 @@ class OpenGLWindow(Renderer):
         current = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(current))
         cursor_x, cursor_y = current.left + position[0], current.top + position[1]
-        start_x, start_y, window_x, window_y = self._left_drag
+        start_x, start_y, _, _ = self._left_drag
         self._left_max_move = max(
             self._left_max_move,
             math.hypot(cursor_x - start_x, cursor_y - start_y),
         )
         now = time.monotonic()
+        previous_cursor = self._drag_last_cursor
         if self._drag_last_cursor is not None:
             elapsed = max(now - self._drag_last_time, 0.001)
             velocity_x = (cursor_x - self._drag_last_cursor[0]) / elapsed
             target = _grab_angle(
                 self._left_grab,
-                (self._overlay_width, self._overlay_height)
+                (self._overlay_sprite_width, self._overlay_sprite_height)
                 if self._desktop_transparent else (self._width, self._height),
                 velocity_x,
             )
@@ -823,8 +839,8 @@ class OpenGLWindow(Renderer):
         self._user.SetWindowPos(
             self._hwnd,
             0,
-            window_x + cursor_x - start_x,
-            window_y + cursor_y - start_y,
+            current.left + cursor_x - previous_cursor[0],
+            current.top + cursor_y - previous_cursor[1],
             0,
             0,
             0x1 | 0x4,
@@ -1092,7 +1108,7 @@ class OpenGLWindow(Renderer):
         self._squish_x, self._squish_y = _squish_from_drag(
             self._right_origin,
             position,
-            (self._overlay_width, self._overlay_height)
+            (self._overlay_sprite_width, self._overlay_sprite_height)
             if self._desktop_transparent else (self._width, self._height),
         )
 
@@ -1191,11 +1207,6 @@ class OpenGLWindow(Renderer):
         glBindTexture(GL_TEXTURE_2D, self._texture_for(intent))
 
         left, top, width, height = self._sprite_layout(intent)
-        fit = _rotation_fit(width, height, self._drag_angle, (self._width, self._height))
-        if fit < 1.0:
-            center_x, center_y = left + width / 2, top + height / 2
-            width, height = width * fit, height * fit
-            left, top = center_x - width / 2, center_y - height / 2
         corners = _rotated_quad(left, top, width, height, self._drag_angle)
 
         glBegin(GL_QUADS)
