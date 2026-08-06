@@ -216,7 +216,7 @@ class OpenGLWindow(Renderer):
         self._squish_y = 0.0
         self._right_drag: tuple[int, int, int, int] | None = None
         self._roam_remaining = random.uniform(12.0, 24.0)
-        self._roam_velocity = 0.0
+        self._roam_velocity = (0.0, 0.0)
         self._last_roam_time = time.monotonic()
 
         try:
@@ -457,7 +457,7 @@ class OpenGLWindow(Renderer):
         width, height = round(self._width * width_scale), round(self._height * height_scale)
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._width, self._height), pygame.SRCALPHA, 32)
-        sway, bob = _walk_offset(bool(self._roam_velocity), time.monotonic())
+        sway, bob = _walk_offset(self._is_walking(), time.monotonic())
         frame.blit(sprite, (
             round((self._width - width) / 2 + sway),
             round((self._height - height) / 2 + bob),
@@ -567,7 +567,7 @@ class OpenGLWindow(Renderer):
         )
 
     def _wander(self) -> None:
-        """Occasionally take a small horizontal walk, then settle again."""
+        """Occasionally take a short walk in a random on-screen direction."""
         now = time.monotonic()
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
@@ -576,31 +576,49 @@ class OpenGLWindow(Renderer):
 
         self._roam_remaining -= dt
         if self._roam_remaining <= 0.0:
-            if self._roam_velocity:
+            if self._is_walking():
                 # Rest long enough that Pikita feels alive, not restless.
-                self._roam_velocity = 0.0
+                self._roam_velocity = (0.0, 0.0)
                 self._roam_remaining = random.uniform(14.0, 30.0)
             else:
                 self._begin_walk()
 
-        if not self._roam_velocity:
+        if not self._is_walking():
             return
 
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
-        next_x = round(window.left + self._roam_velocity * dt * _walk_speed_scale(now))
+        window_width = window.right - window.left
+        window_height = window.bottom - window.top
+        velocity_x, velocity_y = self._roam_velocity
+        stride = dt * _walk_speed_scale(now)
+        next_x = round(window.left + velocity_x * stride)
+        next_y = round(window.top + velocity_y * stride)
         # Keep him on the virtual desktop, even on a multi-monitor setup.
         left = self._user.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
         width = self._user.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
-        next_x = max(left, min(left + width - self._width, next_x))
-        if next_x in (left, left + width - self._width):
-            self._roam_velocity *= -1
-        self._user.SetWindowPos(self._hwnd, 0, next_x, window.top, 0, 0, 0x1 | 0x4)
+        top = self._user.GetSystemMetrics(77)  # SM_YVIRTUALSCREEN
+        height = self._user.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+        max_x = left + width - window_width
+        max_y = top + height - window_height
+        next_x = max(left, min(max_x, next_x))
+        next_y = max(top, min(max_y, next_y))
+        if next_x in (left, max_x):
+            velocity_x *= -1
+        if next_y in (top, max_y):
+            velocity_y *= -1
+        self._roam_velocity = (velocity_x, velocity_y)
+        self._user.SetWindowPos(self._hwnd, 0, next_x, next_y, 0, 0, 0x1 | 0x4)
 
     def _begin_walk(self) -> None:
         """Take a few brisk, weighty steps before settling again."""
-        self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(100.0, 135.0)
+        direction = random.uniform(0.0, math.tau)
+        speed = random.uniform(100.0, 135.0)
+        self._roam_velocity = (math.cos(direction) * speed, math.sin(direction) * speed)
         self._roam_remaining = random.uniform(2.0, 4.5)
+
+    def _is_walking(self) -> bool:
+        return self._roam_velocity != (0.0, 0.0)
 
     def _update_squish(self, position: tuple[int, int]) -> None:
         if self._left_origin is None:
@@ -684,7 +702,7 @@ class OpenGLWindow(Renderer):
         height_scale = 1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x
         width = self._width * width_scale
         height = self._height * height_scale
-        sway, bob = _walk_offset(bool(self._roam_velocity), time.monotonic())
+        sway, bob = _walk_offset(self._is_walking(), time.monotonic())
         left = (self._width - width) / 2 + sway
         top = (self._height - height) / 2 + bob
         right, bottom = left + width, top + height

@@ -5,6 +5,5 @@ Mixkit's free sound-effects catalog under the Mixkit License:
 
 - `Squeak_RubberDuck.mp3`: Rubber duck squeak, item 1014
 - `Squeak_Little.mp3`: Little squeak, item 1018
-- `Squeak_RubberFast.mp3`: Rubber fast squeak, item 1013
 
 Source page: https://mixkit.co/free-sound-effects/squeak/
