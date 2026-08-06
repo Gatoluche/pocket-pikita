@@ -1,6 +1,7 @@
+import math
 import unittest
 
-from render.opengl_window import _normalize, _squish_from_drag
+from render.opengl_window import _normalize, _squish_from_drag, _walk_offset
 
 
 class RendererHelperTests(unittest.TestCase):
@@ -20,6 +21,14 @@ class RendererHelperTests(unittest.TestCase):
         x, y = _squish_from_drag((20, 80), (80, 180), (300, 600))
         self.assertGreater(x, 0.0)
         self.assertGreater(y, 0.0)
+
+    def test_walk_gait_is_still_while_resting(self):
+        self.assertEqual(_walk_offset(False, 1.2), (0.0, 0.0))
+
+    def test_walk_gait_sways_and_bobs_when_moving(self):
+        sway, bob = _walk_offset(True, math.pi / 22)
+        self.assertGreater(sway, 0.0)
+        self.assertLess(bob, 0.0)
 
 
 if __name__ == "__main__":

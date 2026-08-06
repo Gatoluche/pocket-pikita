@@ -4,6 +4,7 @@ import ctypes
 import json
 from array import array
 from ctypes import wintypes
+import math
 from pathlib import Path
 import random
 import time
@@ -86,6 +87,14 @@ def _squish_from_drag(
         max(0.0, min(1.0, inward_x / max(abs(from_center_x), 1))),
         max(0.0, min(1.0, inward_y / max(abs(from_center_y), 1))),
     )
+
+
+def _walk_offset(walking: bool, seconds: float) -> tuple[float, float]:
+    """A small gait that gives a static sprite a sense of weight and motion."""
+    if not walking:
+        return 0.0, 0.0
+    step = math.sin(seconds * 11.0)
+    return step * 9.0, -abs(step) * 11.0
 
 
 class _Point(ctypes.Structure):
@@ -460,7 +469,11 @@ class OpenGLWindow(Renderer):
         width, height = round(self._width * width_scale), round(self._height * height_scale)
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._width, self._height), pygame.SRCALPHA, 32)
-        frame.blit(sprite, ((self._width - width) // 2, (self._height - height) // 2))
+        sway, bob = _walk_offset(bool(self._roam_velocity), time.monotonic())
+        frame.blit(sprite, (
+            round((self._width - width) / 2 + sway),
+            round((self._height - height) / 2 + bob),
+        ))
         pixels = pygame.image.tostring(frame.premul_alpha(), "BGRA", False)
         ctypes.memmove(self._layered_bits, pixels, len(pixels))
 
@@ -680,8 +693,9 @@ class OpenGLWindow(Renderer):
         height_scale = 1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x
         width = self._width * width_scale
         height = self._height * height_scale
-        left = (self._width - width) / 2
-        top = (self._height - height) / 2
+        sway, bob = _walk_offset(bool(self._roam_velocity), time.monotonic())
+        left = (self._width - width) / 2 + sway
+        top = (self._height - height) / 2 + bob
         right, bottom = left + width, top + height
 
         glBegin(GL_QUADS)
