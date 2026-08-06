@@ -46,6 +46,7 @@ from OpenGL.GL import (
 from pygame.locals import DOUBLEBUF, OPENGL
 
 from input.events import FrameInput
+from desktop_icons import DesktopIcon, DesktopIcons
 from pet.intent import Expression, PetIntent, Sound
 from render.renderer import Renderer
 
@@ -228,10 +229,14 @@ class OpenGLWindow(Renderer):
         self._surfaces: dict[str, pygame.Surface] = {}
         for png in pngs:
             surface = pygame.image.load(str(png)).convert_alpha()
-            surface = pygame.transform.smoothscale(surface, (self._width, self._height))
             key = _normalize(png.name)
             self._surfaces[key] = surface
-            self._textures[key] = self._make_texture(surface)
+            # Keep the original for the layered window. Enlarging an already
+            # resized surface is what produced the faint vertical striping.
+            texture_surface = pygame.transform.smoothscale(
+                surface, (self._width, self._height)
+            )
+            self._textures[key] = self._make_texture(texture_surface)
 
         self._setup_gl()
         self._clock = pygame.time.Clock()
@@ -259,6 +264,11 @@ class OpenGLWindow(Renderer):
         self._peek_started = 0.0
         self._monitors: list[_Rect] = []
         self._next_monitor_refresh = 0.0
+        self._desktop_icons = DesktopIcons()
+        self._next_icon_try = self._last_roam_time + random.uniform(20.0, 35.0)
+        self._eating_icon: DesktopIcon | None = None
+        self._eating_started = 0.0
+        self._eating_sounded = False
 
         try:
             if pygame.mixer.get_init() is None:
@@ -424,6 +434,10 @@ class OpenGLWindow(Renderer):
             self._destroy_overlay_window()
             self._hwnd = self._gl_hwnd
             self._user.ShowWindow(self._gl_hwnd, 4)  # SW_SHOWNOACTIVATE
+            # The framed view is a stable preview/OBS window, not pet mode.
+            self._roam_velocity = (0.0, 0.0)
+            self._walk_kind = "idle"
+            self._jump_target = self._jump_origin = self._peek_target = None
         self._desktop_transparent = enable
 
     def _create_overlay_window(self, x: int, y: int) -> None:
@@ -565,6 +579,7 @@ class OpenGLWindow(Renderer):
         sprite = pygame.transform.smoothscale(sprite, (width, height))
         frame = pygame.Surface((self._overlay_width, self._overlay_height), pygame.SRCALPHA, 32)
         frame.blit(sprite, (round(left), round(top)))
+        self._draw_eating_icon(frame, left, top, width, height)
         pixels = pygame.image.tostring(frame.premul_alpha(), "BGRA", False)
         ctypes.memmove(self._layered_bits, pixels, len(pixels))
 
@@ -582,6 +597,41 @@ class OpenGLWindow(Renderer):
                 raise OSError(f"Could not paint transparent window: {ctypes.get_last_error()}")
         finally:
             self._user.ReleaseDC(None, screen_dc)
+
+    def _draw_eating_icon(
+        self, frame: pygame.Surface, sprite_left: float, sprite_top: float, sprite_width: int, sprite_height: int
+    ) -> None:
+        """Lift the captured desktop icon to Pikita's mouth, then shrink it away."""
+        if self._eating_icon is None:
+            return
+        progress = min(1.0, (time.monotonic() - self._eating_started) / 1.15)
+        mouth_x = sprite_left + sprite_width * 0.51
+        mouth_y = sprite_top + sprite_height * 0.57
+        size = max(4, round(48 * (1.0 - max(0.0, progress - 0.62) / 0.38)))
+        icon = pygame.transform.smoothscale(self._eating_icon.image, (size, size))
+        start_x, start_y = sprite_width * 0.86, sprite_height * 0.72
+        x = sprite_left + start_x + (mouth_x - (sprite_left + start_x)) * progress - size / 2
+        y = sprite_top + start_y + (mouth_y - (sprite_top + start_y)) * progress - size / 2
+        frame.blit(icon, (round(x), round(y)))
+        if progress >= 1.0:
+            self._eating_icon = None
+
+    def _try_eat_desktop_icon(self, now: float) -> bool:
+        if self._eating_icon is not None or now < self._next_icon_try:
+            return False
+        self._next_icon_try = now + random.uniform(35.0, 65.0)
+        try:
+            icon = self._desktop_icons.choose_visible()
+        except OSError:
+            return False
+        if icon is None:
+            return False
+        self._eating_icon = icon
+        self._eating_started = now
+        self._eating_sounded = False
+        self._attention_expression = Expression.HAPPY
+        self._attention_until = now + 1.2
+        return True
 
     def _native_window_proc(self, hwnd, message, w_param, l_param):
         """Record overlay input; pygame continues to handle the framed window."""
@@ -677,6 +727,9 @@ class OpenGLWindow(Renderer):
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
         if self._right_drag is not None or self._left_origin is not None:
+            return
+
+        if not self._is_walking() and not self._is_jumping() and self._try_eat_desktop_icon(now):
             return
 
         window = _Rect()
@@ -930,12 +983,18 @@ class OpenGLWindow(Renderer):
         )
 
     def render(self, intent: PetIntent) -> None:
-        self._wander()
+        # Only the true-alpha desktop overlay is allowed to move itself.
+        if self._desktop_transparent:
+            self._wander()
         if time.monotonic() < self._attention_until and not intent.squishing:
             intent = replace(intent, expression=self._attention_expression)
         if self._is_inspecting() and not self._inspection_squeaked and self._poke_sounds:
             random.choice(self._poke_sounds).play()
             self._inspection_squeaked = True
+        if self._eating_icon is not None and not self._eating_sounded and self._poke_sounds:
+            # Temporary stand-in until the selected Minecraft eating asset is supplied.
+            random.choice(self._poke_sounds).play()
+            self._eating_sounded = True
         if intent.sound is Sound.SQUEAK and self._poke_sounds:
             random.choice(self._poke_sounds).play()
 
