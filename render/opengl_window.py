@@ -170,7 +170,6 @@ class OpenGLWindow(Renderer):
         self._gl_hwnd = self._hwnd
         self._configure_win32()
         self._always_on_top = bool(settings.get("always_on_top", True))
-        self._roaming = bool(settings.get("roaming", True))
         self._desktop_transparent = False
         self._overlay_hwnd = None
         self._overlay_class_name = None
@@ -288,7 +287,6 @@ class OpenGLWindow(Renderer):
             "position": [window.left, window.top],
             "desktop_transparent": self._desktop_transparent,
             "always_on_top": self._always_on_top,
-            "roaming": self._roaming,
         }
         self._settings_path.write_text(
             json.dumps(settings, indent=2) + "\n", encoding="utf-8"
@@ -518,8 +516,9 @@ class OpenGLWindow(Renderer):
         elif key in (pygame.K_a, 0x41):
             self._set_topmost(not self._always_on_top)
         elif key in (pygame.K_m, 0x4D):
-            self._roaming = not self._roaming
-            self._roam_remaining = random.uniform(12.0, 24.0)
+            # M is a nudge: make him take a little walk right now.
+            self._roam_velocity = random.choice((-1.0, 1.0)) * random.uniform(18.0, 32.0)
+            self._roam_remaining = random.uniform(2.0, 4.5)
         return False
 
     def _handle_mouse_down(self, button: int, position: tuple[int, int]) -> None:
@@ -572,7 +571,7 @@ class OpenGLWindow(Renderer):
         now = time.monotonic()
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
-        if not self._roaming or self._right_drag is not None or self._left_origin is not None:
+        if self._right_drag is not None or self._left_origin is not None:
             return
 
         self._roam_remaining -= dt
