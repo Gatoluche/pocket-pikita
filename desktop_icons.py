@@ -62,10 +62,13 @@ class DesktopIcons:
             point = self._item_position(list_view, index)
             if point is None or not self._is_desktop_at(list_view, point):
                 continue
-            # The 48px crop includes the icon but deliberately leaves its label alone.
-            image = ImageGrab.grab(bbox=(point[0] - 24, point[1] - 24, point[0] + 24, point[1] + 24))
+            # Explorer reports the icon's upper-left corner. Keep the label out.
+            image = ImageGrab.grab(bbox=(point[0], point[1], point[0] + 64, point[1] + 64))
             surface = pygame.image.fromstring(image.tobytes(), image.size, image.mode).convert_alpha()
-            return DesktopIcon(point, surface)
+            # Remove the captured desktop behind the icon. It is sampled from
+            # the corner, so it does not turn a dark wallpaper into a black tile.
+            surface.set_colorkey(surface.get_at((0, 0)))
+            return DesktopIcon((point[0] + 32, point[1] + 32), surface)
         return None
 
     def _distance_to_item(self, list_view, index: int, near: tuple[int, int]) -> float:

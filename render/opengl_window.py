@@ -267,6 +267,7 @@ class OpenGLWindow(Renderer):
         self._desktop_icons = DesktopIcons()
         self._next_icon_try = self._last_roam_time + random.uniform(20.0, 35.0)
         self._eating_icon: DesktopIcon | None = None
+        self._snack_target: DesktopIcon | None = None
         self._eating_started = 0.0
         self._eating_sounded = False
 
@@ -617,7 +618,7 @@ class OpenGLWindow(Renderer):
             self._eating_icon = None
 
     def _try_eat_desktop_icon(self, now: float, force: bool = False) -> bool:
-        if self._eating_icon is not None or (not force and now < self._next_icon_try):
+        if self._eating_icon is not None or self._snack_target is not None or (not force and now < self._next_icon_try):
             return False
         self._next_icon_try = now + random.uniform(35.0, 65.0)
         try:
@@ -632,9 +633,8 @@ class OpenGLWindow(Renderer):
             return False
         if icon is None:
             return False
-        self._eating_icon = icon
-        self._eating_started = now
-        self._eating_sounded = False
+        self._snack_target = icon
+        self._walk_kind = "snack"
         self._attention_expression = Expression.HAPPY
         self._attention_until = now + 1.2
         return True
@@ -736,6 +736,31 @@ class OpenGLWindow(Renderer):
         dt = min(now - self._last_roam_time, 0.1)
         self._last_roam_time = now
         if self._right_drag is not None or self._left_origin is not None:
+            return
+
+        if self._snack_target is not None:
+            window = _Rect()
+            self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+            center_x = (window.left + window.right) / 2
+            center_y = (window.top + window.bottom) / 2
+            dx = self._snack_target.center[0] - center_x
+            dy = self._snack_target.center[1] - center_y
+            distance = math.hypot(dx, dy)
+            if distance <= 12.0:
+                self._eating_icon = self._snack_target
+                self._snack_target = None
+                self._eating_started = now
+                self._eating_sounded = False
+                self._roam_velocity = (0.0, 0.0)
+                self._walk_kind = "idle"
+            else:
+                # Short gait-paced steps make the approach visibly intentional.
+                step = min(distance, 220.0 * dt * _walk_speed_scale(now))
+                self._roam_velocity = (dx / distance, dy / distance)
+                self._user.SetWindowPos(
+                    self._hwnd, 0, round(window.left + dx / distance * step),
+                    round(window.top + dy / distance * step), 0, 0, 0x1 | 0x4,
+                )
             return
 
         if not self._is_walking() and not self._is_jumping() and self._try_eat_desktop_icon(now):
