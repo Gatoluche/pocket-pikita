@@ -42,7 +42,7 @@ from OpenGL.GL import (
     glVertex2f,
     glViewport,
 )
-from pygame.locals import DOUBLEBUF, NOFRAME, OPENGL
+from pygame.locals import DOUBLEBUF, OPENGL
 
 from input.events import FrameInput
 from pet.intent import PetIntent, Sound
@@ -51,10 +51,19 @@ from render.renderer import Renderer
 TARGET_HEIGHT = 600
 FPS = 60
 BACKGROUND = (0.075, 0.085, 0.12)
-# Deliberately absent from the sprites. Windows removes this color only while
-# desktop-transparency is enabled; the alpha buffer remains available to OBS.
-TRANSPARENCY_KEY = (1.0, 0.0, 1.0)
 DRAG_THRESHOLD = 6
+WS_EX_LAYERED = 0x00080000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_POPUP = 0x80000000
+ULW_ALPHA = 0x2
+AC_SRC_ALPHA = 0x1
+PM_REMOVE = 0x0001
+WM_KEYDOWN = 0x0100
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_RBUTTONUP = 0x0205
+WM_MOUSEMOVE = 0x0200
 
 
 def _normalize(name: str) -> str:
@@ -92,6 +101,51 @@ class _Rect(ctypes.Structure):
     ]
 
 
+class _Size(ctypes.Structure):
+    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
+
+
+class _BlendFunction(ctypes.Structure):
+    _fields_ = [
+        ("blend_op", ctypes.c_byte),
+        ("blend_flags", ctypes.c_byte),
+        ("source_constant_alpha", ctypes.c_byte),
+        ("alpha_format", ctypes.c_byte),
+    ]
+
+
+class _BitmapInfoHeader(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint), ("width", ctypes.c_long), ("height", ctypes.c_long),
+        ("planes", ctypes.c_ushort), ("bit_count", ctypes.c_ushort),
+        ("compression", ctypes.c_uint), ("size_image", ctypes.c_uint),
+        ("x_pels_per_meter", ctypes.c_long), ("y_pels_per_meter", ctypes.c_long),
+        ("clr_used", ctypes.c_uint), ("clr_important", ctypes.c_uint),
+    ]
+
+
+class _BitmapInfo(ctypes.Structure):
+    _fields_ = [("header", _BitmapInfoHeader), ("colors", ctypes.c_uint * 1)]
+
+
+class _Msg(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND), ("message", ctypes.c_uint),
+        ("w_param", wintypes.WPARAM), ("l_param", wintypes.LPARAM),
+        ("time", ctypes.c_uint), ("point", _Point),
+    ]
+
+
+class _WindowClass(ctypes.Structure):
+    _fields_ = [
+        ("style", ctypes.c_uint), ("window_proc", ctypes.c_void_p),
+        ("class_extra", ctypes.c_int), ("window_extra", ctypes.c_int),
+        ("instance", wintypes.HINSTANCE), ("icon", wintypes.HANDLE),
+        ("cursor", wintypes.HANDLE), ("background", wintypes.HANDLE),
+        ("menu_name", wintypes.LPCWSTR), ("class_name", wintypes.LPCWSTR),
+    ]
+
+
 class OpenGLWindow(Renderer):
     def __init__(self, assets_dir: Path):
         self._settings_path = assets_dir.parent / "settings.json"
@@ -108,9 +162,8 @@ class OpenGLWindow(Renderer):
         scale = TARGET_HEIGHT / sample.get_height()
         self._width = round(sample.get_width() * scale)
         self._height = TARGET_HEIGHT
-        pygame.display.set_mode(
-            (self._width, self._height), OPENGL | DOUBLEBUF | NOFRAME
-        )
+        # Opaque mode is an ordinary window, complete with a title bar to drag.
+        pygame.display.set_mode((self._width, self._height), OPENGL | DOUBLEBUF)
         pygame.display.set_caption("Pocket Pikita")
 
         self._hwnd = pygame.display.get_wm_info()["window"]
@@ -119,6 +172,14 @@ class OpenGLWindow(Renderer):
         self._always_on_top = bool(settings.get("always_on_top", True))
         self._roaming = bool(settings.get("roaming", True))
         self._desktop_transparent = False
+        self._overlay_hwnd = None
+        self._overlay_class_name = None
+        self._native_events: list[tuple[str, object]] = []
+        self._window_proc = None  # Keep the ctypes callback alive for Windows.
+        self._layered_dc = None
+        self._layered_bitmap = None
+        self._layered_previous = None
+        self._layered_bits = None
         position = settings.get("position")
         if isinstance(position, list) and len(position) == 2:
             self._user.SetWindowPos(
@@ -166,8 +227,9 @@ class OpenGLWindow(Renderer):
             self._set_desktop_transparency(True)
 
     def _configure_win32(self) -> None:
-        self._gdi = ctypes.windll.gdi32
         self._user = ctypes.windll.user32
+        self._gdi = ctypes.windll.gdi32
+        self._kernel = ctypes.windll.kernel32
         self._user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
         self._user.GetWindowLongW.restype = ctypes.c_long
         self._user.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
@@ -177,10 +239,41 @@ class OpenGLWindow(Renderer):
         ] * 4 + [ctypes.c_uint]
         self._user.GetCursorPos.argtypes = [ctypes.POINTER(_Point)]
         self._user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_Rect)]
-        self._user.SetLayeredWindowAttributes.argtypes = [
-            wintypes.HWND, wintypes.COLORREF, ctypes.c_byte, ctypes.c_uint
+        self._user.CreateWindowExW.argtypes = [
+            ctypes.c_uint, wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_uint,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, ctypes.c_void_p,
         ]
-        self._user.SetLayeredWindowAttributes.restype = wintypes.BOOL
+        self._user.CreateWindowExW.restype = wintypes.HWND
+        self._user.UpdateLayeredWindow.argtypes = [
+            wintypes.HWND, wintypes.HDC, ctypes.POINTER(_Point), ctypes.POINTER(_Size),
+            wintypes.HDC, ctypes.POINTER(_Point), ctypes.c_uint,
+            ctypes.POINTER(_BlendFunction), ctypes.c_uint,
+        ]
+        self._user.UpdateLayeredWindow.restype = wintypes.BOOL
+        self._user.PeekMessageW.argtypes = [
+            ctypes.POINTER(_Msg), wintypes.HWND, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint
+        ]
+        self._user.RegisterClassW.argtypes = [ctypes.POINTER(_WindowClass)]
+        self._user.DefWindowProcW.argtypes = [
+            wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM
+        ]
+        self._user.DefWindowProcW.restype = ctypes.c_ssize_t
+        self._kernel.GetModuleHandleW.restype = wintypes.HMODULE
+        self._user.GetDC.argtypes = [wintypes.HWND]
+        self._user.GetDC.restype = wintypes.HDC
+        self._user.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        self._gdi.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        self._gdi.CreateCompatibleDC.restype = wintypes.HDC
+        self._gdi.CreateDIBSection.argtypes = [
+            wintypes.HDC, ctypes.POINTER(_BitmapInfo), ctypes.c_uint,
+            ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, ctypes.c_uint,
+        ]
+        self._gdi.CreateDIBSection.restype = wintypes.HBITMAP
+        self._gdi.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
+        self._gdi.SelectObject.restype = wintypes.HANDLE
+        self._gdi.DeleteObject.argtypes = [wintypes.HANDLE]
+        self._gdi.DeleteDC.argtypes = [wintypes.HDC]
 
     def _load_settings(self) -> dict:
         try:
@@ -278,24 +371,173 @@ class OpenGLWindow(Renderer):
         return self._surfaces[self._sprite_key_for(intent)]
 
     def _set_desktop_transparency(self, enable: bool) -> None:
-        """Toggle a color-keyed, input-capable version of the GL window.
-
-        The old DWM blur path made the entire client area a translucent
-        material, which is why the desktop showed a dark square. A color key
-        removes just the deliberately rendered magenta background instead.
-        """
+        """Swap the framed GL window for a true-alpha native overlay."""
+        if enable == self._desktop_transparent:
+            return
         if enable:
-            style = self._user.GetWindowLongW(self._gl_hwnd, -20)  # GWL_EXSTYLE
-            self._user.SetWindowLongW(self._gl_hwnd, -20, style | 0x00080000)
-            # COLORREF is packed as 0x00bbggrr, so magenta is 0x00ff00ff.
-            if not self._user.SetLayeredWindowAttributes(
-                self._gl_hwnd, 0x00FF00FF, 0, 0x1  # LWA_COLORKEY
-            ):
-                raise OSError(f"Could not apply desktop transparency: {ctypes.get_last_error()}")
+            window = _Rect()
+            self._user.GetWindowRect(self._gl_hwnd, ctypes.byref(window))
+            self._create_overlay_window(window.left, window.top)
+            self._hwnd = self._overlay_hwnd
+            self._set_topmost(self._always_on_top)
+            self._user.ShowWindow(self._gl_hwnd, 0)  # SW_HIDE
         else:
-            style = self._user.GetWindowLongW(self._gl_hwnd, -20)
-            self._user.SetWindowLongW(self._gl_hwnd, -20, style & ~0x00080000)
+            self._destroy_overlay_window()
+            self._hwnd = self._gl_hwnd
+            self._user.ShowWindow(self._gl_hwnd, 4)  # SW_SHOWNOACTIVATE
         self._desktop_transparent = enable
+
+    def _create_overlay_window(self, x: int, y: int) -> None:
+        callback_type = ctypes.WINFUNCTYPE(
+            ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM
+        )
+        self._window_proc = callback_type(self._native_window_proc)
+        self._overlay_class_name = f"PocketPikitaOverlay{ id(self) }"
+        window_class = _WindowClass()
+        window_class.window_proc = ctypes.cast(self._window_proc, ctypes.c_void_p).value
+        window_class.instance = self._kernel.GetModuleHandleW(None)
+        window_class.class_name = self._overlay_class_name
+        if not self._user.RegisterClassW(ctypes.byref(window_class)):
+            raise OSError(f"Could not register transparent window: {ctypes.get_last_error()}")
+
+        overlay = self._user.CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+            self._overlay_class_name,
+            "",
+            WS_POPUP,
+            x,
+            y,
+            self._width,
+            self._height,
+            None,
+            None,
+            window_class.instance,
+            None,
+        )
+        if not overlay:
+            raise OSError(f"Could not create transparent window: {ctypes.get_last_error()}")
+        self._overlay_hwnd = overlay
+        self._create_layered_buffer()
+        self._user.ShowWindow(overlay, 4)  # SW_SHOWNOACTIVATE
+
+    def _destroy_overlay_window(self) -> None:
+        self._destroy_layered_buffer()
+        if self._overlay_hwnd:
+            self._user.DestroyWindow(self._overlay_hwnd)
+        self._overlay_hwnd = None
+        self._window_proc = None
+
+    def _create_layered_buffer(self) -> None:
+        screen_dc = self._user.GetDC(None)
+        self._layered_dc = self._gdi.CreateCompatibleDC(screen_dc)
+        bits = ctypes.c_void_p()
+        info = _BitmapInfo()
+        info.header.size = ctypes.sizeof(_BitmapInfoHeader)
+        info.header.width = self._width
+        info.header.height = -self._height  # Top-down: pygame rows copy directly.
+        info.header.planes = 1
+        info.header.bit_count = 32
+        self._layered_bitmap = self._gdi.CreateDIBSection(
+            self._layered_dc, ctypes.byref(info), 0, ctypes.byref(bits), None, 0
+        )
+        if not self._layered_dc or not self._layered_bitmap or not bits.value:
+            raise OSError("Could not allocate transparent-window surface.")
+        self._layered_previous = self._gdi.SelectObject(self._layered_dc, self._layered_bitmap)
+        self._layered_bits = bits
+        self._user.ReleaseDC(None, screen_dc)
+
+    def _destroy_layered_buffer(self) -> None:
+        if self._layered_dc and self._layered_previous:
+            self._gdi.SelectObject(self._layered_dc, self._layered_previous)
+        if self._layered_bitmap:
+            self._gdi.DeleteObject(self._layered_bitmap)
+        if self._layered_dc:
+            self._gdi.DeleteDC(self._layered_dc)
+        self._layered_dc = self._layered_bitmap = self._layered_previous = self._layered_bits = None
+
+    def _render_layered(self, intent: PetIntent) -> None:
+        sprite = self._surface_for(intent)
+        width_scale = 1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y
+        height_scale = 1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x
+        width, height = round(self._width * width_scale), round(self._height * height_scale)
+        sprite = pygame.transform.smoothscale(sprite, (width, height))
+        frame = pygame.Surface((self._width, self._height), pygame.SRCALPHA, 32)
+        frame.blit(sprite, ((self._width - width) // 2, (self._height - height) // 2))
+        pixels = pygame.image.tostring(frame.premul_alpha(), "BGRA", False)
+        ctypes.memmove(self._layered_bits, pixels, len(pixels))
+
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        screen_dc = self._user.GetDC(None)
+        try:
+            updated = self._user.UpdateLayeredWindow(
+                self._hwnd, screen_dc, ctypes.byref(_Point(window.left, window.top)),
+                ctypes.byref(_Size(self._width, self._height)), self._layered_dc,
+                ctypes.byref(_Point(0, 0)), 0,
+                ctypes.byref(_BlendFunction(0, 0, 255, AC_SRC_ALPHA)), ULW_ALPHA,
+            )
+            if not updated:
+                raise OSError(f"Could not paint transparent window: {ctypes.get_last_error()}")
+        finally:
+            self._user.ReleaseDC(None, screen_dc)
+
+    def _native_window_proc(self, hwnd, message, w_param, l_param):
+        """Record overlay input; pygame continues to handle the framed window."""
+        if message == WM_KEYDOWN:
+            self._native_events.append(("key", int(w_param)))
+        elif message in (WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MOUSEMOVE, WM_LBUTTONUP, WM_RBUTTONUP):
+            x = ctypes.c_short(l_param & 0xFFFF).value
+            y = ctypes.c_short((l_param >> 16) & 0xFFFF).value
+            names = {
+                WM_LBUTTONDOWN: "left_down", WM_LBUTTONUP: "left_up",
+                WM_RBUTTONDOWN: "right_down", WM_RBUTTONUP: "right_up",
+                WM_MOUSEMOVE: "move",
+            }
+            self._native_events.append((names[message], (x, y)))
+            if message in (WM_LBUTTONDOWN, WM_RBUTTONDOWN):
+                self._user.SetCapture(hwnd)
+            elif message in (WM_LBUTTONUP, WM_RBUTTONUP):
+                self._user.ReleaseCapture()
+        return self._user.DefWindowProcW(hwnd, message, w_param, l_param)
+
+    def _pump_overlay_messages(self) -> None:
+        if not self._overlay_hwnd:
+            return
+        message = _Msg()
+        while self._user.PeekMessageW(
+            ctypes.byref(message), self._overlay_hwnd, 0, 0, PM_REMOVE
+        ):
+            self._user.TranslateMessage(ctypes.byref(message))
+            self._user.DispatchMessageW(ctypes.byref(message))
+
+    def _handle_key(self, key: int) -> bool:
+        if key in (pygame.K_ESCAPE, 0x1B):
+            return True
+        if key in (pygame.K_t, 0x54):
+            self._set_desktop_transparency(not self._desktop_transparent)
+        elif key in (pygame.K_a, 0x41):
+            self._set_topmost(not self._always_on_top)
+        elif key in (pygame.K_m, 0x4D):
+            self._roaming = not self._roaming
+            self._roam_remaining = random.uniform(12.0, 24.0)
+        return False
+
+    def _handle_mouse_down(self, button: int, position: tuple[int, int]) -> None:
+        if button == 1:
+            self._left_origin = position
+            self._left_max_move = 0.0
+        elif button == 3:
+            self._begin_window_drag()
+
+    def _handle_mouse_up(self, button: int) -> bool:
+        if button == 1 and self._left_origin is not None:
+            poked = self._left_max_move < DRAG_THRESHOLD
+            self._left_origin = None
+            self._squish_x = self._squish_y = 0.0
+            return poked
+        if button == 3:
+            self._right_drag = None
+        return False
 
     def _set_topmost(self, enable: bool) -> None:
         hwnd_position = -1 if enable else -2  # HWND_TOPMOST / HWND_NOTOPMOST
@@ -371,37 +613,39 @@ class OpenGLWindow(Renderer):
 
     def pump_events(self) -> FrameInput:
         quit_ = poked = False
+        self._pump_overlay_messages()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 quit_ = True
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    quit_ = True
-                elif event.key == pygame.K_t:
-                    self._set_desktop_transparency(not self._desktop_transparent)
-                elif event.key == pygame.K_a:
-                    self._set_topmost(not self._always_on_top)
-                elif event.key == pygame.K_m:
-                    self._roaming = not self._roaming
-                    self._roam_remaining = random.uniform(12.0, 24.0)
+                quit_ = self._handle_key(event.key) or quit_
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    self._left_origin = event.pos
-                    self._left_max_move = 0.0
-                elif event.button == 3:
-                    self._begin_window_drag()
+                self._handle_mouse_down(event.button, event.pos)
             elif event.type == pygame.MOUSEMOTION:
                 if self._left_origin is not None:
                     self._update_squish(event.pos)
                 if self._right_drag is not None:
                     self._move_window()
             elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1 and self._left_origin is not None:
-                    poked = self._left_max_move < DRAG_THRESHOLD
-                    self._left_origin = None
-                    self._squish_x = self._squish_y = 0.0
-                elif event.button == 3:
-                    self._right_drag = None
+                poked = self._handle_mouse_up(event.button) or poked
+
+        for kind, payload in self._native_events:
+            if kind == "key":
+                quit_ = self._handle_key(payload) or quit_
+            elif kind == "left_down":
+                self._handle_mouse_down(1, payload)
+            elif kind == "right_down":
+                self._handle_mouse_down(3, payload)
+            elif kind == "move":
+                if self._left_origin is not None:
+                    self._update_squish(payload)
+                if self._right_drag is not None:
+                    self._move_window()
+            elif kind == "left_up":
+                poked = self._handle_mouse_up(1) or poked
+            elif kind == "right_up":
+                self._handle_mouse_up(3)
+        self._native_events.clear()
 
         return FrameInput(
             quit=quit_,
@@ -424,8 +668,12 @@ class OpenGLWindow(Renderer):
             self._held_channel.fadeout(100)
             self._held_channel = None
 
-        background = TRANSPARENCY_KEY if self._desktop_transparent else BACKGROUND
-        glClearColor(*background, 0.0)
+        if self._desktop_transparent:
+            self._render_layered(intent)
+            self._clock.tick(FPS)
+            return
+
+        glClearColor(*BACKGROUND, 0.0)
         glClear(GL_COLOR_BUFFER_BIT)
         glBindTexture(GL_TEXTURE_2D, self._texture_for(intent))
 
