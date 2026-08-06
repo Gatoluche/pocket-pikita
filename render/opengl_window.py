@@ -3,6 +3,7 @@
 import ctypes
 import json
 from ctypes import wintypes
+from dataclasses import replace
 import math
 from pathlib import Path
 import random
@@ -45,7 +46,7 @@ from OpenGL.GL import (
 from pygame.locals import DOUBLEBUF, OPENGL
 
 from input.events import FrameInput
-from pet.intent import PetIntent, Sound
+from pet.intent import Expression, PetIntent, Sound
 from render.renderer import Renderer
 
 TARGET_HEIGHT = 600
@@ -91,12 +92,12 @@ def _squish_from_drag(
     )
 
 
-def _walk_offset(walking: bool, seconds: float) -> tuple[float, float]:
+def _walk_offset(walking: bool, seconds: float, strength: float = 1.0) -> tuple[float, float]:
     """A small gait that gives a static sprite a sense of weight and motion."""
     if not walking:
         return 0.0, 0.0
     step = math.sin(seconds * 11.0)
-    return step * 9.0, -abs(step) * 11.0
+    return step * 9.0 * strength, -abs(step) * 11.0 * strength
 
 
 def _walk_speed_scale(seconds: float) -> float:
@@ -107,7 +108,9 @@ def _walk_speed_scale(seconds: float) -> float:
 def _perspective_scale(window_bottom: int, monitor_top: int, monitor_bottom: int) -> float:
     """Map vertical position to depth: higher on a display means farther away."""
     depth = (window_bottom - monitor_top) / max(monitor_bottom - monitor_top, 1)
-    return 0.62 + 0.38 * max(0.0, min(1.0, depth))
+    # Half-size at the horizon (one quarter the area), current size in the
+    # middle, and large enough to own the foreground near the bottom.
+    return 0.50 + 1.05 * max(0.0, min(1.0, depth))
 
 
 def _jump_motion(progress: float) -> tuple[float, float, float, float]:
@@ -212,6 +215,8 @@ class OpenGLWindow(Renderer):
         self._layered_bitmap = None
         self._layered_previous = None
         self._layered_bits = None
+        self._overlay_width = self._width
+        self._overlay_height = self._height
         position = settings.get("position")
         if isinstance(position, list) and len(position) == 2:
             self._user.SetWindowPos(
@@ -239,9 +244,19 @@ class OpenGLWindow(Renderer):
         self._roam_velocity = (0.0, 0.0)
         self._walk_kind = "idle"
         self._last_roam_time = time.monotonic()
+        self._walk_started = self._last_roam_time
+        self._walk_duration = 0.0
         self._cursor_next_check = self._last_roam_time
+        self._cursor_pause_until = self._last_roam_time
+        self._inspect_until = 0.0
+        self._inspection_squeaked = False
+        self._attention_until = 0.0
+        self._attention_expression = Expression.BASE
         self._jump_target: tuple[int, int] | None = None
+        self._jump_origin: tuple[int, int] | None = None
         self._jump_started = 0.0
+        self._peek_target: tuple[int, int] | None = None
+        self._peek_started = 0.0
         self._monitors: list[_Rect] = []
         self._next_monitor_refresh = 0.0
 
@@ -442,6 +457,7 @@ class OpenGLWindow(Renderer):
         if not overlay:
             raise OSError(f"Could not create transparent window: {ctypes.get_last_error()}")
         self._overlay_hwnd = overlay
+        self._overlay_width, self._overlay_height = self._width, self._height
         self._create_layered_buffer()
         self._user.ShowWindow(overlay, 4)  # SW_SHOWNOACTIVATE
 
@@ -457,8 +473,8 @@ class OpenGLWindow(Renderer):
         bits = ctypes.c_void_p()
         info = _BitmapInfo()
         info.header.size = ctypes.sizeof(_BitmapInfoHeader)
-        info.header.width = self._width
-        info.header.height = -self._height  # Top-down: pygame rows copy directly.
+        info.header.width = self._overlay_width
+        info.header.height = -self._overlay_height  # Top-down: pygame rows copy directly.
         info.header.planes = 1
         info.header.bit_count = 32
         self._layered_bitmap = self._gdi.CreateDIBSection(
@@ -479,6 +495,33 @@ class OpenGLWindow(Renderer):
             self._gdi.DeleteDC(self._layered_dc)
         self._layered_dc = self._layered_bitmap = self._layered_previous = self._layered_bits = None
 
+    def _update_overlay_scale(self) -> None:
+        """Resize the alpha canvas around Pikita's feet as he changes depth."""
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        monitor = self._monitor_for_window(window, self._monitor_rects())
+        if monitor is None:
+            return
+        scale = _perspective_scale(window.bottom, monitor.top, monitor.bottom)
+        width = round(self._width * scale)
+        height = round(self._height * scale)
+        if abs(width - self._overlay_width) < 8 and abs(height - self._overlay_height) < 8:
+            return
+        center_x = (window.left + window.right) / 2
+        bottom = window.bottom
+        self._destroy_layered_buffer()
+        self._overlay_width, self._overlay_height = width, height
+        self._user.SetWindowPos(
+            self._hwnd,
+            0,
+            round(center_x - width / 2),
+            bottom - height,
+            width,
+            height,
+            0x4,
+        )
+        self._create_layered_buffer()
+
     def _sprite_layout(self, intent: PetIntent) -> tuple[float, float, float, float]:
         """Place the sprite on a shared ground line for normal and alpha rendering."""
         window = _Rect()
@@ -489,24 +532,38 @@ class OpenGLWindow(Renderer):
             if monitor is not None
             else 1.0
         )
+        canvas_width = self._overlay_width if self._desktop_transparent else self._width
+        canvas_height = self._overlay_height if self._desktop_transparent else self._height
+        # The transparent overlay itself grows for perspective, avoiding any
+        # clipping. The framed fallback can still recede, but cannot enlarge.
+        if self._desktop_transparent:
+            perspective = 1.0
+        else:
+            perspective = min(1.0, perspective)
         width_scale = (1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y) * perspective
         height_scale = (1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x) * perspective
         if self._is_jumping():
             sway, bob, jump_width, jump_height = _jump_motion(self._jump_progress())
             width_scale *= jump_width
             height_scale *= jump_height
+        elif self._is_peeking():
+            sway, bob = (14.0 if self._roam_velocity[0] >= 0 else -14.0), 0.0
+        elif self._is_inspecting():
+            sway, bob = 8.0, -3.0
         else:
-            sway, bob = _walk_offset(self._is_walking(), time.monotonic())
-        width = self._width * width_scale
-        height = self._height * height_scale
-        return (self._width - width) / 2 + sway, self._height - height + bob, width, height
+            sway, bob = _walk_offset(
+                self._is_walking(), time.monotonic(), self._walk_strength()
+            )
+        width = canvas_width * width_scale
+        height = canvas_height * height_scale
+        return (canvas_width - width) / 2 + sway, canvas_height - height + bob, width, height
 
     def _render_layered(self, intent: PetIntent) -> None:
         sprite = self._surface_for(intent)
         left, top, width, height = self._sprite_layout(intent)
         width, height = round(width), round(height)
         sprite = pygame.transform.smoothscale(sprite, (width, height))
-        frame = pygame.Surface((self._width, self._height), pygame.SRCALPHA, 32)
+        frame = pygame.Surface((self._overlay_width, self._overlay_height), pygame.SRCALPHA, 32)
         frame.blit(sprite, (round(left), round(top)))
         pixels = pygame.image.tostring(frame.premul_alpha(), "BGRA", False)
         ctypes.memmove(self._layered_bits, pixels, len(pixels))
@@ -517,7 +574,7 @@ class OpenGLWindow(Renderer):
         try:
             updated = self._user.UpdateLayeredWindow(
                 self._hwnd, screen_dc, ctypes.byref(_Point(window.left, window.top)),
-                ctypes.byref(_Size(self._width, self._height)), self._layered_dc,
+                ctypes.byref(_Size(self._overlay_width, self._overlay_height)), self._layered_dc,
                 ctypes.byref(_Point(0, 0)), 0,
                 ctypes.byref(_BlendFunction(0, 0, 255, AC_SRC_ALPHA)), ULW_ALPHA,
             )
@@ -571,6 +628,8 @@ class OpenGLWindow(Renderer):
         if button == 1:
             self._left_origin = position
             self._left_max_move = 0.0
+            self._attention_expression = Expression.HAPPY
+            self._attention_until = time.monotonic() + 0.5
         elif button == 3:
             self._begin_window_drag()
 
@@ -620,18 +679,43 @@ class OpenGLWindow(Renderer):
         if self._right_drag is not None or self._left_origin is not None:
             return
 
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+
         if self._is_jumping():
-            if self._jump_progress(now) >= 1.0:
+            progress = self._jump_progress(now)
+            origin_x, origin_y = self._jump_origin
+            target_x, target_y = self._jump_target
+            eased = progress * progress * (3.0 - 2.0 * progress)
+            arc = 72.0 * math.sin(math.pi * progress)
+            self._user.SetWindowPos(
+                self._hwnd,
+                0,
+                round(origin_x + (target_x - origin_x) * eased),
+                round(origin_y + (target_y - origin_y) * eased - arc),
+                0,
+                0,
+                0x1 | 0x4,
+            )
+            if progress >= 1.0:
                 target_x, target_y = self._jump_target
                 self._user.SetWindowPos(self._hwnd, 0, target_x, target_y, 0, 0, 0x1 | 0x4)
                 self._jump_target = None
+                self._jump_origin = None
                 self._roam_velocity = (0.0, 0.0)
                 self._walk_kind = "idle"
                 self._roam_remaining = random.uniform(1.0, 3.0)
             return
 
-        window = _Rect()
-        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        if self._is_peeking():
+            if now - self._peek_started >= 0.45:
+                self._jump_target = self._peek_target
+                self._jump_origin = (window.left, window.top)
+                self._jump_started = now
+                self._peek_target = None
+                self._walk_kind = "jump"
+            return
+
         if not self._is_walking() and self._try_cursor_step(window, now):
             return
 
@@ -640,10 +724,12 @@ class OpenGLWindow(Renderer):
             if self._is_walking():
                 self._roam_velocity = (0.0, 0.0)
                 self._roam_remaining = (
-                    random.uniform(0.45, 1.0)
+                    random.uniform(1.4, 2.4)
                     if self._walk_kind == "cursor"
                     else random.uniform(14.0, 30.0)
                 )
+                if self._walk_kind == "cursor":
+                    self._cursor_pause_until = now + self._roam_remaining
                 self._walk_kind = "idle"
             else:
                 self._begin_walk()
@@ -661,7 +747,7 @@ class OpenGLWindow(Renderer):
         window_width = window.right - window.left
         window_height = window.bottom - window.top
         velocity_x, velocity_y = self._roam_velocity
-        stride = dt * _walk_speed_scale(now)
+        stride = dt * _walk_speed_scale(now) * self._walk_strength(now)
         next_x = round(window.left + velocity_x * stride)
         next_y = round(window.top + velocity_y * stride)
         max_x = monitor.right - window_width
@@ -676,7 +762,7 @@ class OpenGLWindow(Renderer):
         self._user.SetWindowPos(self._hwnd, 0, next_x, next_y, 0, 0, 0x1 | 0x4)
 
     def _try_cursor_step(self, window: _Rect, now: float) -> bool:
-        if now < self._cursor_next_check:
+        if now < self._cursor_next_check or now < self._cursor_pause_until:
             return False
         self._cursor_next_check = now + random.uniform(0.35, 0.8)
         cursor = _Point()
@@ -687,6 +773,13 @@ class OpenGLWindow(Renderer):
         distance = math.hypot(dx, dy)
         if not 24.0 < distance <= CURSOR_NOTICE_DISTANCE:
             return False
+        if distance <= 150.0:
+            self._inspect_until = now + 0.8
+            self._inspection_squeaked = False
+            self._attention_expression = Expression.WINK
+            self._attention_until = self._inspect_until
+            self._cursor_pause_until = self._inspect_until + random.uniform(1.4, 2.4)
+            return True
         self._begin_walk("cursor", math.atan2(dy, dx), random.uniform(0.45, 0.85))
         return True
 
@@ -698,10 +791,13 @@ class OpenGLWindow(Renderer):
     ) -> None:
         """Take a few brisk, weighty steps before settling again."""
         direction = random.uniform(0.0, math.tau) if direction is None else direction
-        speed = random.uniform(100.0, 135.0)
+        # Ease-in/ease-out lowers average speed, so the stride starts brisker.
+        speed = random.uniform(175.0, 230.0)
         self._roam_velocity = (math.cos(direction) * speed, math.sin(direction) * speed)
         self._roam_remaining = random.uniform(2.0, 4.5) if duration is None else duration
         self._walk_kind = kind
+        self._walk_started = time.monotonic()
+        self._walk_duration = self._roam_remaining
 
     def _monitor_rects(self) -> list[_Rect]:
         if self._monitors and time.monotonic() < self._next_monitor_refresh:
@@ -747,14 +843,21 @@ class OpenGLWindow(Renderer):
                 target = (max(other.left, min(other.right - width, window.left)), other.top + 12)
             else:
                 continue
-            self._jump_target = target
-            self._jump_started = time.monotonic()
-            self._walk_kind = "jump"
+            self._peek_target = target
+            self._peek_started = time.monotonic()
+            self._attention_expression = Expression.SMUG
+            self._attention_until = self._peek_started + 0.45
             return True
         return False
 
     def _is_jumping(self) -> bool:
         return self._jump_target is not None
+
+    def _is_peeking(self) -> bool:
+        return self._peek_target is not None
+
+    def _is_inspecting(self) -> bool:
+        return time.monotonic() < self._inspect_until
 
     def _jump_progress(self, now: float | None = None) -> float:
         if not self._is_jumping():
@@ -763,6 +866,13 @@ class OpenGLWindow(Renderer):
 
     def _is_walking(self) -> bool:
         return self._roam_velocity != (0.0, 0.0) and not self._is_jumping()
+
+    def _walk_strength(self, now: float | None = None) -> float:
+        if not self._is_walking() or self._walk_duration <= 0.0:
+            return 0.0
+        elapsed = (time.monotonic() if now is None else now) - self._walk_started
+        progress = max(0.0, min(1.0, elapsed / self._walk_duration))
+        return math.sin(math.pi * progress)
 
     def _update_squish(self, position: tuple[int, int]) -> None:
         if self._left_origin is None:
@@ -821,6 +931,11 @@ class OpenGLWindow(Renderer):
 
     def render(self, intent: PetIntent) -> None:
         self._wander()
+        if time.monotonic() < self._attention_until and not intent.squishing:
+            intent = replace(intent, expression=self._attention_expression)
+        if self._is_inspecting() and not self._inspection_squeaked and self._poke_sounds:
+            random.choice(self._poke_sounds).play()
+            self._inspection_squeaked = True
         if intent.sound is Sound.SQUEAK and self._poke_sounds:
             random.choice(self._poke_sounds).play()
 
@@ -834,6 +949,7 @@ class OpenGLWindow(Renderer):
             self._held_channel = None
 
         if self._desktop_transparent:
+            self._update_overlay_scale()
             self._render_layered(intent)
             self._clock.tick(FPS)
             return
