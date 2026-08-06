@@ -15,6 +15,7 @@ from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     GL_LINEAR,
     GL_MODELVIEW,
+    GL_NEAREST,
     GL_ONE,
     GL_ONE_MINUS_SRC_ALPHA,
     GL_PROJECTION,
@@ -377,8 +378,10 @@ class OpenGLWindow(Renderer):
     def _make_texture(surface: pygame.Surface) -> int:
         texture = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, texture)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        # Linear sampling leaves vertical bands in the flat white areas of the
+        # temporary raster sprite. Nearest keeps the line art clean at this size.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         data = pygame.image.tostring(surface.premul_alpha(), "RGBA", False)
         glTexImage2D(
             GL_TEXTURE_2D,
