@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pygame
 
+from pet.animation import IDLE_CLIP, WALK_CLIP
+
 
 @dataclass(frozen=True)
 class _Part:
@@ -150,20 +152,22 @@ class IllustratorRig:
         canvas = pygame.Surface(
             (self._width, self._height), pygame.SRCALPHA, 32
         )
-        step = math.sin(seconds * 11.0)
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
         idle = 1.0 - strength
+        idle_motion = IDLE_CLIP.sample(seconds)
+        walk_motion = WALK_CLIP.sample(seconds)
 
-        feet_left = step * 8.0 * strength + math.sin(seconds * 0.9) * 0.45 * idle
-        feet_right = step * 8.0 * strength + math.sin(seconds * 0.9 + 0.8) * 0.45 * idle
+        feet_left = walk_motion.get("feet_left", 0.0) * strength + idle_motion["feet_left"] * idle
+        feet_right = walk_motion.get("feet_right", 0.0) * strength + idle_motion["feet_right"] * idle
         self._draw_rotated(canvas, self._parts["Feet"]["left"], feet_left)
         self._draw_rotated(canvas, self._parts["Feet"]["right"], feet_right)
 
         canvas.blit(self._layers["Body"], (0, 0))
         canvas.blit(self._layers["Bottom Hair"], (0, 0))
 
-        ear_left = math.sin(seconds * 2.2) * (2.4 + strength * 1.0)
-        ear_right = math.sin(seconds * 1.9 + 1.1) * (2.4 + strength * 1.0)
+        ear_scale = 1.0 + 0.4 * strength
+        ear_left = idle_motion["ear_left"] * ear_scale
+        ear_right = idle_motion["ear_right"] * ear_scale
         if jumping:
             ear_left -= 3.0
             ear_right += 3.0
@@ -174,9 +178,8 @@ class IllustratorRig:
         canvas.blit(self._layers["Frame"], (0, 0))
         canvas.blit(self._face_for(expression_surface), (0, 0))
 
-        arm_idle = math.sin(seconds * 1.4) * 0.9 * idle
-        arm_left = step * 12.0 * strength + arm_idle
-        arm_right = step * 12.0 * strength + math.sin(seconds * 1.4 + 1.2) * 0.9 * idle
+        arm_left = walk_motion.get("arm_left", 0.0) * strength + idle_motion["arm_left"] * idle
+        arm_right = walk_motion.get("arm_right", 0.0) * strength + idle_motion["arm_right"] * idle
         if jumping:
             arm_left += 5.0
             arm_right -= 5.0
@@ -185,7 +188,7 @@ class IllustratorRig:
 
         canvas.blit(self._layers["Top Hair"], (0, 0))
 
-        breathing = 1.35 * math.sin(seconds * 1.8) * idle
+        breathing = idle_motion["breathing"] * idle
         if abs(breathing) > 0.05:
             frame = pygame.Surface(
                 (self._width, self._height), pygame.SRCALPHA, 32
