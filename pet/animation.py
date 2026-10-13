@@ -118,24 +118,6 @@ WALK_CLIP = AnimationClip(
     loop=True,
 )
 
-LOOK_AROUND_CLIP = AnimationClip(
-    "look around",
-    2.6,
-    {
-        "gaze_x": (
-            Keyframe(0.0, 0.0), Keyframe(0.25, 0.0),
-            Keyframe(0.58, -1.0, "ease_out"), Keyframe(0.98, -1.0),
-            Keyframe(1.28, 0.85, "ease_in"), Keyframe(1.65, 0.85),
-            Keyframe(2.0, 0.0, "smooth"), Keyframe(2.6, 0.0),
-        ),
-        "gaze_y": (
-            Keyframe(0.0, 0.0), Keyframe(0.98, 0.0),
-            Keyframe(1.28, -0.45, "ease_in"), Keyframe(1.65, -0.45),
-            Keyframe(2.0, 0.0, "smooth"), Keyframe(2.6, 0.0),
-        ),
-    },
-)
-
 EAR_FLICK_CLIP = AnimationClip(
     "ear flick",
     0.72,

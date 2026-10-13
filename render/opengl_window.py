@@ -49,6 +49,7 @@ from pygame.locals import DOUBLEBUF, OPENGL
 
 from input.events import FrameInput
 from desktop_icons import DesktopIcon, DesktopIcons
+from pet.eye_tracking import EyeTarget, EyeTracker
 from pet.intent import Expression, PetIntent, Sound
 from render.illustrator_rig import IllustratorRig
 from render.renderer import Renderer
@@ -343,6 +344,8 @@ class OpenGLWindow(Renderer):
         self._textures: dict[str, int] = {}
         self._surfaces: dict[str, pygame.Surface] = {}
         self._last_sprite_surface: pygame.Surface | None = None
+        self._eye_tracker = EyeTracker()
+        self._eye_tracking_time = time.monotonic()
         for png in pngs:
             surface = _clean_transparent_edge(
                 pygame.image.load(str(png)).convert_alpha()
@@ -1259,6 +1262,77 @@ class OpenGLWindow(Renderer):
             ),
         )
 
+    @staticmethod
+    def _monitor_containing_point(
+        point: tuple[float, float], monitors: list[_Rect]
+    ) -> _Rect | None:
+        x, y = point
+        return next(
+            (
+                monitor
+                for monitor in monitors
+                if monitor.left <= x < monitor.right
+                and monitor.top <= y < monitor.bottom
+            ),
+            None,
+        )
+
+    def _track_cursor_with_eyes(self, intent: PetIntent) -> PetIntent:
+        now = time.monotonic()
+        dt = max(0.0, min(0.1, now - self._eye_tracking_time))
+        self._eye_tracking_time = now
+
+        left, top, width, height = self._sprite_layout(intent)
+        if self._desktop_transparent:
+            window = _Rect()
+            self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+            origin = (window.left, window.top)
+        else:
+            origin = self._client_to_screen((0, 0))
+
+        eye_x = origin[0] + left + width * (223.0 / 446.0)
+        eye_y = origin[1] + top + height * (411.0 / 910.0)
+        center_x = origin[0] + left + width / 2
+        center_y = origin[1] + top + height / 2
+        radians = math.radians(self._drag_angle)
+        dx, dy = eye_x - center_x, eye_y - center_y
+        eye_position = (
+            center_x + dx * math.cos(radians) - dy * math.sin(radians),
+            center_y + dx * math.sin(radians) + dy * math.cos(radians),
+        )
+
+        targets: list[EyeTarget] = []
+        monitors = self._monitor_rects()
+        monitor = self._monitor_containing_point(eye_position, monitors)
+        if (
+            monitor is not None
+            and intent.expression is Expression.BASE
+            and not intent.blinking
+            and not intent.talking
+        ):
+            cursor = _Point()
+            if self._user.GetCursorPos(ctypes.byref(cursor)):
+                cursor_monitor = self._monitor_containing_point(
+                    (cursor.x, cursor.y), monitors
+                )
+                if cursor_monitor is monitor:
+                    targets.append(EyeTarget((cursor.x, cursor.y), source="cursor"))
+
+        gaze_x, gaze_y = self._eye_tracker.update(
+            eye_position,
+            targets,
+            dt,
+            focus_range=(
+                max(180.0, (monitor.right - monitor.left) * 0.52)
+                if monitor is not None
+                else 520.0,
+                max(140.0, (monitor.bottom - monitor.top) * 0.52)
+                if monitor is not None
+                else 360.0,
+            ),
+        )
+        return replace(intent, gaze_x=gaze_x, gaze_y=gaze_y)
+
     def _try_begin_screen_jump(
         self, window: _Rect, monitor: _Rect, monitors: list[_Rect]
     ) -> bool:
@@ -1413,10 +1487,12 @@ class OpenGLWindow(Renderer):
         # Only the true-alpha desktop overlay is allowed to move itself.
         if self._desktop_transparent:
             self._wander()
+            self._update_overlay_scale()
         if self._left_drag is not None and not intent.squishing:
             intent = replace(intent, expression=Expression.UNIMPRESSED)
         elif time.monotonic() < self._attention_until and not intent.squishing:
             intent = replace(intent, expression=self._attention_expression)
+        intent = self._track_cursor_with_eyes(intent)
         if self._is_inspecting() and not self._inspection_squeaked and self._poke_sounds:
             random.choice(self._poke_sounds).play()
             self._inspection_squeaked = True
@@ -1437,7 +1513,6 @@ class OpenGLWindow(Renderer):
             self._held_channel = None
 
         if self._desktop_transparent:
-            self._update_overlay_scale()
             self._anchor_dragged_sprite(intent)
             self._render_layered(intent)
             self._clock.tick(FPS)
