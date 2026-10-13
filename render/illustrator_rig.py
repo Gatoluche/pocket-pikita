@@ -35,6 +35,9 @@ class IllustratorRig:
         self._face_mask = self._make_face_mask(self._layers["Faces"])
         self._extend_face_mask_over_cheeks(self._face_mask)
         self._masked_faces: dict[int, pygame.Surface] = {}
+        self._gaze_source: pygame.Surface | None = None
+        self._gaze_background: pygame.Surface | None = None
+        self._gaze_patch: pygame.Surface | None = None
         self._parts = {
             layer_name: {
                 side: self._make_part(layer_name, side, pivot)
@@ -96,6 +99,84 @@ class IllustratorRig:
         return face
 
     @staticmethod
+    def _pupil_regions() -> tuple[tuple[list[tuple[int, int]], tuple[int, int, int, int]], ...]:
+        # These small interior masks come from the current Base PNG, not the
+        # differently styled "Eyes V4" Illustrator layer. Keep the art's pupil
+        # contours fixed while shifting its shaded centers and catchlights.
+        return (
+            (
+                [(130, 397), (143, 395), (158, 397), (168, 402), (174, 409),
+                 (171, 418), (166, 425), (157, 430), (146, 430), (137, 426),
+                 (131, 419), (128, 410), (128, 403)],
+                (137, 387, 12, 10),
+            ),
+            (
+                [(271, 397), (284, 395), (299, 397), (309, 402), (315, 409),
+                 (312, 418), (307, 425), (298, 430), (287, 430), (278, 426),
+                 (272, 419), (269, 410), (269, 403)],
+                (278, 387, 12, 10),
+            ),
+        )
+
+    def _prepare_gaze(self, expression_surface: pygame.Surface) -> None:
+        background = expression_surface.copy()
+        patch = pygame.Surface(expression_surface.get_size(), pygame.SRCALPHA, 32)
+        for polygon, (center_x, center_y, radius_x, radius_y) in self._pupil_regions():
+            pupil_mask = pygame.Surface(expression_surface.get_size())
+            pupil_mask.fill((0, 0, 0))
+            pygame.draw.polygon(pupil_mask, (255, 255, 255), polygon)
+            x0 = max(0, min(point[0] for point in polygon) - 2)
+            x1 = min(expression_surface.get_width(), max(point[0] for point in polygon) + 3)
+            y0 = max(0, min(point[1] for point in polygon) - 2)
+            y1 = min(expression_surface.get_height(), max(point[1] for point in polygon) + 3)
+            for x in range(x0, x1):
+                for y in range(y0, y1):
+                    if pupil_mask.get_at((x, y)).r == 0:
+                        continue
+                    color = expression_surface.get_at((x, y))
+                    if color.r == color.g == color.b and 12 <= color.r <= 60:
+                        patch.set_at((x, y), color)
+                        background.set_at((x, y), (0, 0, 0, color.a))
+
+            for x in range(center_x - radius_x, center_x + radius_x + 1):
+                for y in range(center_y - radius_y, center_y + radius_y + 1):
+                    within_highlight = (
+                        ((x - center_x) / radius_x) ** 2
+                        + ((y - center_y) / radius_y) ** 2
+                        <= 1.0
+                    )
+                    if not within_highlight:
+                        continue
+                    color = expression_surface.get_at((x, y))
+                    if color.r == color.g == color.b and color.r >= 200:
+                        patch.set_at((x, y), color)
+                        background.set_at((x, y), (0, 0, 0, color.a))
+
+        self._gaze_source = expression_surface
+        self._gaze_background = background
+        self._gaze_patch = patch
+
+    def _gazed_face_for(
+        self,
+        expression_surface: pygame.Surface,
+        gaze_x: float,
+        gaze_y: float,
+    ) -> pygame.Surface:
+        if expression_surface is not self._gaze_source:
+            self._prepare_gaze(expression_surface)
+        offset = (
+            round(max(-1.0, min(1.0, gaze_x)) * 6.0),
+            round(max(-1.0, min(1.0, gaze_y)) * 3.0),
+        )
+        if offset == (0, 0):
+            return self._face_for(expression_surface)
+        assert self._gaze_background is not None and self._gaze_patch is not None
+        face = self._gaze_background.copy()
+        face.blit(self._gaze_patch, offset)
+        face.blit(self._face_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        return face
+
+    @staticmethod
     def _draw_rotated(
         canvas: pygame.Surface,
         part: _Part,
@@ -147,6 +228,10 @@ class IllustratorRig:
         walking: bool = False,
         walk_strength: float = 0.0,
         jumping: bool = False,
+        gaze_x: float = 0.0,
+        gaze_y: float = 0.0,
+        ear_flick_left: float = 0.0,
+        ear_flick_right: float = 0.0,
     ) -> pygame.Surface:
         """Return one assembled frame while preserving the selected PNG face."""
         canvas = pygame.Surface(
@@ -166,8 +251,8 @@ class IllustratorRig:
         canvas.blit(self._layers["Bottom Hair"], (0, 0))
 
         ear_scale = 1.0 + 0.4 * strength
-        ear_left = idle_motion["ear_left"] * ear_scale
-        ear_right = idle_motion["ear_right"] * ear_scale
+        ear_left = idle_motion["ear_left"] * ear_scale + ear_flick_left
+        ear_right = idle_motion["ear_right"] * ear_scale + ear_flick_right
         if jumping:
             ear_left -= 3.0
             ear_right += 3.0
@@ -176,7 +261,12 @@ class IllustratorRig:
 
         canvas.blit(self._layers["Faces"], (0, 0))
         canvas.blit(self._layers["Frame"], (0, 0))
-        canvas.blit(self._face_for(expression_surface), (0, 0))
+        face = (
+            self._gazed_face_for(expression_surface, gaze_x, gaze_y)
+            if gaze_x or gaze_y
+            else self._face_for(expression_surface)
+        )
+        canvas.blit(face, (0, 0))
 
         arm_left = walk_motion.get("arm_left", 0.0) * strength + idle_motion["arm_left"] * idle
         arm_right = walk_motion.get("arm_right", 0.0) * strength + idle_motion["arm_right"] * idle

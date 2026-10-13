@@ -583,6 +583,22 @@ class OpenGLWindow(Renderer):
             walking=self._is_walking(),
             walk_strength=self._walk_strength(now),
             jumping=self._is_jumping(),
+            gaze_x=(
+                intent.gaze_x
+                if intent.expression is Expression.BASE
+                and not intent.blinking
+                and not intent.talking
+                else 0.0
+            ),
+            gaze_y=(
+                intent.gaze_y
+                if intent.expression is Expression.BASE
+                and not intent.blinking
+                and not intent.talking
+                else 0.0
+            ),
+            ear_flick_left=intent.ear_flick_left,
+            ear_flick_right=intent.ear_flick_right,
         )
 
     def _upload_rig_texture(self, surface: pygame.Surface) -> int:

@@ -37,3 +37,8 @@ class PetIntent:
     squishing: bool = False
     squish_x: float = 0.0
     squish_y: float = 0.0
+    # Normalized gaze controls (-1..1); ear flicks are added in degrees.
+    gaze_x: float = 0.0
+    gaze_y: float = 0.0
+    ear_flick_left: float = 0.0
+    ear_flick_right: float = 0.0
