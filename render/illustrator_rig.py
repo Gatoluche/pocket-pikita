@@ -111,7 +111,10 @@ class IllustratorRig:
             )
             return
 
-        rotated = pygame.transform.rotate(image, angle)
+        # rotate() is unfiltered, so even tiny ear/limb movements produce
+        # visibly stepped edges. rotozoom() keeps the same angle and scale
+        # while filtering the transformed pixels.
+        rotated = pygame.transform.rotozoom(image, angle, 1.0)
         radians = math.radians(angle)
         cosine, sine = math.cos(radians), math.sin(radians)
         center_x, center_y = image.get_width() / 2, image.get_height() / 2
