@@ -41,6 +41,7 @@ from OpenGL.GL import (
     glTexCoord2f,
     glTexImage2D,
     glTexParameteri,
+    glTexSubImage2D,
     glVertex2f,
     glViewport,
 )
@@ -49,6 +50,7 @@ from pygame.locals import DOUBLEBUF, OPENGL
 from input.events import FrameInput
 from desktop_icons import DesktopIcon, DesktopIcons
 from pet.intent import Expression, PetIntent, Sound
+from render.illustrator_rig import IllustratorRig
 from render.renderer import Renderer
 
 TARGET_HEIGHT = 600
@@ -296,6 +298,7 @@ class OpenGLWindow(Renderer):
     def __init__(self, assets_dir: Path):
         self._settings_path = assets_dir.parent / "settings.json"
         settings = self._load_settings()
+        self._illustrator_rig_enabled = bool(settings.get("illustrator_rig", True))
         pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_ALPHA_SIZE, 8)
@@ -354,6 +357,14 @@ class OpenGLWindow(Renderer):
             self._textures[key] = self._make_texture(texture_surface)
 
         self._setup_gl()
+        rig_manifest = assets_dir / "rig" / "manifest.json"
+        self._illustrator_rig = (
+            IllustratorRig(assets_dir / "rig") if rig_manifest.is_file() else None
+        )
+        self._rig_texture = None
+        if self._illustrator_rig is not None:
+            blank = pygame.Surface((self._width, self._height), pygame.SRCALPHA, 32)
+            self._rig_texture = self._make_texture(blank)
         self._clock = pygame.time.Clock()
         self._left_origin: tuple[int, int] | None = None
         self._left_max_move = 0.0
@@ -489,6 +500,7 @@ class OpenGLWindow(Renderer):
             "position": [x, y],
             "desktop_transparent": self._desktop_transparent,
             "always_on_top": self._always_on_top,
+            "illustrator_rig": self._illustrator_rig_enabled,
         }
         self._settings_path.write_text(
             json.dumps(settings, indent=2) + "\n", encoding="utf-8"
@@ -559,6 +571,38 @@ class OpenGLWindow(Renderer):
 
     def _surface_for(self, intent: PetIntent) -> pygame.Surface:
         return self._surfaces[self._sprite_key_for(intent)]
+
+    def _display_surface_for(self, intent: PetIntent) -> pygame.Surface:
+        source = self._surface_for(intent)
+        if self._illustrator_rig is None or not self._illustrator_rig_enabled:
+            return source
+        now = time.monotonic()
+        return self._illustrator_rig.compose(
+            source,
+            now,
+            walking=self._is_walking(),
+            walk_strength=self._walk_strength(now),
+            jumping=self._is_jumping(),
+        )
+
+    def _upload_rig_texture(self, surface: pygame.Surface) -> int:
+        texture_surface = pygame.transform.smoothscale(
+            surface, (self._width, self._height)
+        )
+        data = pygame.image.tostring(texture_surface.premul_alpha(), "RGBA", False)
+        glBindTexture(GL_TEXTURE_2D, self._rig_texture)
+        glTexSubImage2D(
+            GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            self._width,
+            self._height,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            data,
+        )
+        return self._rig_texture
 
     def _set_desktop_transparency(self, enable: bool) -> None:
         """Swap the framed GL window for a true-alpha native overlay."""
@@ -718,7 +762,7 @@ class OpenGLWindow(Renderer):
         return (canvas_width - width) / 2 + sway, canvas_height - height + bob, width, height
 
     def _render_layered(self, intent: PetIntent) -> None:
-        sprite = self._surface_for(intent)
+        sprite = self._display_surface_for(intent)
         self._last_sprite_surface = sprite
         left, top, width, height = self._sprite_layout(intent)
         self._last_sprite_rect = (left, top, width, height)
@@ -865,6 +909,8 @@ class OpenGLWindow(Renderer):
         elif key in (pygame.K_m, 0x4D):
             # M is a nudge: make him take a little walk right now.
             self._begin_walk()
+        elif key in (pygame.K_r, 0x52) and self._illustrator_rig is not None:
+            self._illustrator_rig_enabled = not self._illustrator_rig_enabled
         elif key in (pygame.K_e, 0x45) and self._desktop_transparent:
             # E is deliberately a manual test of the visible-icon behavior.
             self._try_eat_desktop_icon(time.monotonic(), force=True)
@@ -1383,7 +1429,13 @@ class OpenGLWindow(Renderer):
 
         glClearColor(*BACKGROUND, 0.0)
         glClear(GL_COLOR_BUFFER_BIT)
-        glBindTexture(GL_TEXTURE_2D, self._texture_for(intent))
+        sprite = self._display_surface_for(intent)
+        texture = (
+            self._upload_rig_texture(sprite)
+            if self._illustrator_rig_enabled and self._illustrator_rig is not None
+            else self._texture_for(intent)
+        )
+        glBindTexture(GL_TEXTURE_2D, texture)
 
         left, top, width, height = self._sprite_layout(intent)
         corners = _rotated_quad(left, top, width, height, self._drag_angle)
@@ -1408,5 +1460,8 @@ class OpenGLWindow(Renderer):
             self._held_channel.stop()
         if self._desktop_transparent:
             self._set_desktop_transparency(False)
-        glDeleteTextures(list(self._textures.values()))
+        textures = list(self._textures.values())
+        if self._rig_texture is not None:
+            textures.append(self._rig_texture)
+        glDeleteTextures(textures)
         pygame.quit()

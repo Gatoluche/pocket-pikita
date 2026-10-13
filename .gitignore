@@ -20,3 +20,6 @@ Desktop.ini
 
 # Local window preferences
 settings.json
+
+# Source artwork (exported runtime assets are committed instead)
+/Pikita V4.ai

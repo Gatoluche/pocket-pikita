@@ -1,0 +1,76 @@
+{
+  "canvas_size": [
+    446,
+    910
+  ],
+  "source_file": "Pikita V4.ai",
+  "raster_dpi": 96,
+  "source_layer_order_back_to_front": [
+    "Feet",
+    "Body",
+    "Bottom Hair",
+    "Ear",
+    "Faces",
+    "Face Effects",
+    "Frame",
+    "Arms",
+    "Cheeks",
+    "Mouth",
+    "Nose",
+    "Legacy Eyes",
+    "Eyes V4",
+    "Eyebrow",
+    "Top Hair"
+  ],
+  "layer_files": {
+    "Feet": "feet.png",
+    "Body": "body.png",
+    "Bottom Hair": "bottom_hair.png",
+    "Ear": "ear.png",
+    "Faces": "faces.png",
+    "Face Effects": "face_effects.png",
+    "Frame": "frame.png",
+    "Arms": "arms.png",
+    "Mouth": "mouth.png",
+    "Nose": "nose.png",
+    "Eyes V4": "eyes_v4.png",
+    "Eyebrow": "eyebrow.png",
+    "Top Hair": "top_hair.png"
+  },
+  "empty_layers": [
+    "Cheeks",
+    "Legacy Eyes"
+  ],
+  "paired_layer_pivots": {
+    "Feet": {
+      "left": [
+        65,
+        867
+      ],
+      "right": [
+        381,
+        867
+      ]
+    },
+    "Ear": {
+      "left": [
+        76,
+        258
+      ],
+      "right": [
+        370,
+        258
+      ]
+    },
+    "Arms": {
+      "left": [
+        80,
+        594
+      ],
+      "right": [
+        366,
+        594
+      ]
+    }
+  }
+}
