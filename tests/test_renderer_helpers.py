@@ -5,7 +5,7 @@ import pygame
 
 from render.opengl_window import (
     _clean_transparent_edge,
-    _grounded_canvas_origin,
+    _fixed_overlay_canvas_size,
     _grab_angle,
     _jump_motion,
     _normalize,
@@ -25,8 +25,11 @@ class RendererHelperTests(unittest.TestCase):
         self.assertLess(_grab_angle((150, 40), (300, 600), 500.0), 0.0)
         self.assertGreater(_grab_angle((150, 40), (300, 600), -500.0), 0.0)
 
-    def test_leg_grab_flips_the_sprite(self):
-        self.assertGreater(abs(_grab_angle((40, 590), (300, 600), 0.0)), 170.0)
+    def test_grab_orientation_is_calculated_from_the_actual_point(self):
+        self.assertAlmostEqual(_grab_angle((150, 20), (300, 600), 0.0), 0.0)
+        self.assertAlmostEqual(abs(_grab_angle((150, 580), (300, 600), 0.0)), 180.0)
+        self.assertLess(_grab_angle((20, 300), (300, 600), 0.0), -80.0)
+        self.assertGreater(_grab_angle((280, 300), (300, 600), 0.0), 80.0)
 
     def test_rotated_quad_keeps_its_center(self):
         corners = _rotated_quad(10, 20, 100, 200, 37.0)
@@ -40,10 +43,9 @@ class RendererHelperTests(unittest.TestCase):
         self.assertAlmostEqual(width, 600.0)
         self.assertAlmostEqual(height, 300.0)
 
-    def test_replacing_the_rotation_canvas_keeps_pikitas_feet_in_place(self):
-        left, top = _grounded_canvas_origin(700.0, 920.0, 1036, 1036)
-        self.assertEqual(left + 1036 / 2, 700.0)
-        self.assertEqual(top + 1036, 920.0)
+    def test_fixed_overlay_canvas_fits_the_largest_rotated_sprite(self):
+        canvas = _fixed_overlay_canvas_size(300, 600)
+        self.assertGreater(canvas, math.hypot(300 * 1.55, 600 * 1.55))
 
     def test_rotated_grab_point_round_trips_to_the_same_sprite_position(self):
         sprite_rect = (200.0, 100.0, 300.0, 600.0)

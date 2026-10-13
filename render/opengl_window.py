@@ -67,11 +67,16 @@ WM_LBUTTONUP = 0x0202
 WM_RBUTTONDOWN = 0x0204
 WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
+WM_NCHITTEST = 0x0084
+HTCLIENT = 1
+HTTRANSPARENT = -1
 CURSOR_NOTICE_DISTANCE = 520
 SCREEN_EDGE_DISTANCE = 36
 JUMP_DURATION = 0.6
 DRAG_REST_ANGLE = 0.15
 DRAG_REST_SPEED = 0.5
+MAX_SPRITE_SCALE = 1.55
+OVERLAY_FRAME_MARGIN = 32
 
 
 def _normalize(name: str) -> str:
@@ -120,14 +125,31 @@ def _walk_speed_scale(seconds: float) -> float:
 
 
 def _grab_angle(grab: tuple[int, int], size: tuple[int, int], velocity_x: float) -> float:
-    """Combine pendulum swing with the orientation implied by the grab point."""
+    """Hang the sprite from its actual grab point, then add a little momentum."""
     x, y = grab
     width, height = size
-    depth = max(0.0, min(1.0, (y / max(height, 1) - 0.62) / 0.28))
-    inversion = (180.0 if x < width / 2 else -180.0) * depth
-    # The body trails the grabbed point, so horizontal motion produces opposite torque.
-    swing = max(-38.0, min(38.0, -velocity_x * 0.075)) * (1.0 - depth)
-    return inversion + swing
+    from_grab_x, from_grab_y = width / 2 - x, height / 2 - y
+    distance = math.hypot(from_grab_x, from_grab_y)
+    if distance < 1.0:
+        return 0.0
+    # Rotate the center of mass directly beneath the held pixel. A hair grab
+    # stays upright, a foot grab inverts him, and side grabs lean naturally.
+    hanging = math.degrees(math.atan2(-from_grab_x, from_grab_y))
+    leverage = min(1.0, distance / math.hypot(width / 2, height / 2))
+    swing = max(-34.0, min(34.0, -velocity_x * 0.045)) * max(0.35, leverage)
+    return hanging + swing
+
+
+def _nearest_equivalent_angle(angle: float, reference: float) -> float:
+    """Keep a 180 degree target on the nearest side of the current rotation."""
+    return angle + 360.0 * round((reference - angle) / 360.0)
+
+
+def _fixed_overlay_canvas_size(sprite_width: int, sprite_height: int) -> int:
+    """Reserve enough alpha space for the largest sprite at any rotation."""
+    return math.ceil(
+        math.hypot(sprite_width * MAX_SPRITE_SCALE, sprite_height * MAX_SPRITE_SCALE)
+    ) + OVERLAY_FRAME_MARGIN * 2
 
 
 def _rotated_quad(
@@ -190,13 +212,6 @@ def _point_at_sprite_ratio(
     center = (left + width / 2, top + height / 2)
     point = (left + ratio[0] * width, top + ratio[1] * height)
     return _rotate_screen_point(point, center, angle)
-
-
-def _grounded_canvas_origin(
-    sprite_center_x: float, sprite_bottom: float, canvas_width: int, canvas_height: int
-) -> tuple[int, int]:
-    """Place a replacement canvas without moving Pikita's feet or center line."""
-    return round(sprite_center_x - canvas_width / 2), round(sprite_bottom - canvas_height)
 
 
 def _perspective_scale(sprite_top: int, monitor_top: int, monitor_bottom: int) -> float:
@@ -314,6 +329,7 @@ class OpenGLWindow(Renderer):
         self._overlay_height = self._height
         self._overlay_sprite_width = self._width
         self._overlay_sprite_height = self._height
+        self._overlay_canvas_size = _fixed_overlay_canvas_size(self._width, self._height)
         position = settings.get("position")
         if isinstance(position, list) and len(position) == 2:
             self._user.SetWindowPos(
@@ -323,6 +339,7 @@ class OpenGLWindow(Renderer):
 
         self._textures: dict[str, int] = {}
         self._surfaces: dict[str, pygame.Surface] = {}
+        self._last_sprite_surface: pygame.Surface | None = None
         for png in pngs:
             surface = _clean_transparent_edge(
                 pygame.image.load(str(png)).convert_alpha()
@@ -463,8 +480,13 @@ class OpenGLWindow(Renderer):
     def _save_settings(self) -> None:
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        if self._desktop_transparent:
+            x = round(window.left + (self._overlay_width - self._overlay_sprite_width) / 2)
+            y = round(window.top + self._overlay_height - self._overlay_sprite_height)
+        else:
+            x, y = window.left, window.top
         settings = {
-            "position": [window.left, window.top],
+            "position": [x, y],
             "desktop_transparent": self._desktop_transparent,
             "always_on_top": self._always_on_top,
         }
@@ -550,9 +572,14 @@ class OpenGLWindow(Renderer):
             self._set_topmost(self._always_on_top)
             self._user.ShowWindow(self._gl_hwnd, 0)  # SW_HIDE
         else:
+            overlay = _Rect()
+            self._user.GetWindowRect(self._overlay_hwnd, ctypes.byref(overlay))
+            sprite_x = round(overlay.left + (self._overlay_width - self._overlay_sprite_width) / 2)
+            sprite_y = round(overlay.top + self._overlay_height - self._overlay_sprite_height)
             self._destroy_overlay_window()
             self._hwnd = self._gl_hwnd
             self._user.ShowWindow(self._gl_hwnd, 4)  # SW_SHOWNOACTIVATE
+            self._user.SetWindowPos(self._gl_hwnd, 0, sprite_x, sprite_y, 0, 0, 0x1 | 0x4)
             # The framed view is a stable preview/OBS window, not pet mode.
             self._roam_velocity = (0.0, 0.0)
             self._walk_kind = "idle"
@@ -573,15 +600,20 @@ class OpenGLWindow(Renderer):
             if not self._user.RegisterClassW(ctypes.byref(window_class)):
                 raise OSError(f"Could not register transparent window: {ctypes.get_last_error()}")
 
+        canvas = self._overlay_canvas_size
+        # Keep the framed sprite in the same visible spot when the roomy alpha
+        # canvas replaces it.
+        overlay_x = round(x - (canvas - self._width) / 2)
+        overlay_y = y + self._height - canvas
         overlay = self._user.CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW,
             self._overlay_class_name,
             "",
             WS_POPUP,
-            x,
-            y,
-            self._width,
-            self._height,
+            overlay_x,
+            overlay_y,
+            canvas,
+            canvas,
             None,
             None,
             self._kernel.GetModuleHandleW(None),
@@ -590,7 +622,7 @@ class OpenGLWindow(Renderer):
         if not overlay:
             raise OSError(f"Could not create transparent window: {ctypes.get_last_error()}")
         self._overlay_hwnd = overlay
-        self._overlay_width, self._overlay_height = self._width, self._height
+        self._overlay_width = self._overlay_height = canvas
         self._overlay_sprite_width, self._overlay_sprite_height = self._width, self._height
         self._create_layered_buffer()
         self._user.ShowWindow(overlay, 4)  # SW_SHOWNOACTIVATE
@@ -629,8 +661,8 @@ class OpenGLWindow(Renderer):
             self._gdi.DeleteDC(self._layered_dc)
         self._layered_dc = self._layered_bitmap = self._layered_previous = self._layered_bits = None
 
-    def _update_overlay_scale(self, intent: PetIntent) -> None:
-        """Resize the alpha canvas from Pikita's visible top as he changes depth."""
+    def _update_overlay_scale(self) -> None:
+        """Update Pikita's depth size inside the permanent alpha canvas."""
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
         # Layered sprites sit on the canvas floor; using centered padding here
@@ -648,60 +680,13 @@ class OpenGLWindow(Renderer):
         scale = _perspective_scale(round(sprite_top), monitor.top, monitor.bottom)
         sprite_width = round(self._width * scale)
         sprite_height = round(self._height * scale)
-        rotating = (
-            self._left_drag is not None
-            or abs(self._drag_angle) >= DRAG_REST_ANGLE
-            or abs(self._drag_angular_velocity) >= DRAG_REST_SPEED
-        )
-        if rotating:
-            # Allocate once for the whole gesture. Rebuilding the native DIB at
-            # every angle was the source of the visible drag jitter.
-            maximum_scale = 1.55
-            diameter = math.ceil(
-                math.hypot(self._width * maximum_scale, self._height * maximum_scale)
-            )
-            width = height = diameter
-        else:
-            width, height = sprite_width, sprite_height
-        canvas_changed = width != self._overlay_width or height != self._overlay_height
         sprite_changed = (
             sprite_width != self._overlay_sprite_width
             or sprite_height != self._overlay_sprite_height
         )
-        if not canvas_changed and not sprite_changed:
+        if not sprite_changed:
             return
         self._overlay_sprite_width, self._overlay_sprite_height = sprite_width, sprite_height
-        if not canvas_changed:
-            return
-        sprite_center_x = (window.left + window.right) / 2
-        sprite_bottom = window.top + self._overlay_height
-        self._destroy_layered_buffer()
-        self._overlay_width, self._overlay_height = width, height
-        x, y = _grounded_canvas_origin(sprite_center_x, sprite_bottom, width, height)
-        if self._left_drag is not None and self._drag_cursor is not None:
-            # A new rotation canvas is positioned from the grab itself. This
-            # avoids a one-frame visit to its expanded top-left corner.
-            sprite_rect = (
-                (width - sprite_width) / 2,
-                height - sprite_height,
-                sprite_width,
-                sprite_height,
-            )
-            grabbed = _point_at_sprite_ratio(
-                self._left_grab_ratio, sprite_rect, self._drag_angle
-            )
-            x = round(self._drag_cursor[0] - grabbed[0])
-            y = round(self._drag_cursor[1] - grabbed[1])
-        self._user.SetWindowPos(
-            self._hwnd,
-            0,
-            x,
-            y,
-            width,
-            height,
-            0x4,
-        )
-        self._create_layered_buffer()
 
     def _sprite_layout(self, intent: PetIntent) -> tuple[float, float, float, float]:
         """Place the sprite on a shared ground line for normal and alpha rendering."""
@@ -734,6 +719,7 @@ class OpenGLWindow(Renderer):
 
     def _render_layered(self, intent: PetIntent) -> None:
         sprite = self._surface_for(intent)
+        self._last_sprite_surface = sprite
         left, top, width, height = self._sprite_layout(intent)
         self._last_sprite_rect = (left, top, width, height)
         width, height = round(width), round(height)
@@ -816,6 +802,10 @@ class OpenGLWindow(Renderer):
 
     def _native_window_proc(self, hwnd, message, w_param, l_param):
         """Record overlay input; pygame continues to handle the framed window."""
+        if message == WM_NCHITTEST:
+            x = ctypes.c_short(l_param & 0xFFFF).value
+            y = ctypes.c_short((l_param >> 16) & 0xFFFF).value
+            return HTCLIENT if self._overlay_hit_test(x, y) else HTTRANSPARENT
         if message == WM_KEYDOWN:
             self._native_events.append(("key", int(w_param)))
         elif message in (WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MOUSEMOVE, WM_LBUTTONUP, WM_RBUTTONUP):
@@ -832,6 +822,28 @@ class OpenGLWindow(Renderer):
             elif message in (WM_LBUTTONUP, WM_RBUTTONUP):
                 self._user.ReleaseCapture()
         return self._user.DefWindowProcW(hwnd, message, w_param, l_param)
+
+    def _overlay_hit_test(self, screen_x: int, screen_y: int) -> bool:
+        """Let clicks pass through the roomy invisible canvas around Pikita."""
+        if self._last_sprite_surface is None:
+            return False
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        point = (screen_x - window.left, screen_y - window.top)
+        left, top, width, height = self._last_sprite_rect
+        center = (left + width / 2, top + height / 2)
+        x, y = _rotate_screen_point(point, center, -self._drag_angle)
+        if not left <= x < left + width or not top <= y < top + height:
+            return False
+        source_x = min(
+            self._last_sprite_surface.get_width() - 1,
+            int((x - left) * self._last_sprite_surface.get_width() / width),
+        )
+        source_y = min(
+            self._last_sprite_surface.get_height() - 1,
+            int((y - top) * self._last_sprite_surface.get_height() / height),
+        )
+        return self._last_sprite_surface.get_at((source_x, source_y)).a >= 16
 
     def _pump_overlay_messages(self) -> None:
         if not self._overlay_hwnd:
@@ -1264,8 +1276,9 @@ class OpenGLWindow(Renderer):
                 round(self._left_grab_ratio[0] * size[0]),
                 round(self._left_grab_ratio[1] * size[1]),
             )
-            self._drag_target_angle = _grab_angle(
-                self._left_grab, size, self._drag_velocity_x
+            self._drag_target_angle = _nearest_equivalent_angle(
+                _grab_angle(self._left_grab, size, self._drag_velocity_x),
+                self._drag_angle,
             )
             stiffness, damping = 72.0, 17.0
             acceleration = (
@@ -1362,7 +1375,7 @@ class OpenGLWindow(Renderer):
             self._held_channel = None
 
         if self._desktop_transparent:
-            self._update_overlay_scale(intent)
+            self._update_overlay_scale()
             self._anchor_dragged_sprite(intent)
             self._render_layered(intent)
             self._clock.tick(FPS)
