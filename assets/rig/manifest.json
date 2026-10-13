@@ -5,6 +5,14 @@
   ],
   "source_file": "Pikita V4.ai",
   "raster_dpi": 96,
+  "source_crop_bounds": [
+    430,
+    171,
+    1023,
+    1384
+  ],
+  "export_scope": "PDF optional-content groups (top-level Illustrator layers)",
+  "nested_sublayers": "Composited together; use export_illustrator_sublayers.jsx to export visible sublayers.",
   "source_layer_order_back_to_front": [
     "Feet",
     "Body",
@@ -17,8 +25,7 @@
     "Cheeks",
     "Mouth",
     "Nose",
-    "Legacy Eyes",
-    "Eyes V4",
+    "Eyes",
     "Eyebrow",
     "Top Hair"
   ],
@@ -31,16 +38,14 @@
     "Face Effects": "face_effects.png",
     "Frame": "frame.png",
     "Arms": "arms.png",
+    "Cheeks": "cheeks.png",
     "Mouth": "mouth.png",
     "Nose": "nose.png",
-    "Eyes V4": "eyes_v4.png",
+    "Eyes": "eyes.png",
     "Eyebrow": "eyebrow.png",
     "Top Hair": "top_hair.png"
   },
-  "empty_layers": [
-    "Cheeks",
-    "Legacy Eyes"
-  ],
+  "empty_layers": [],
   "paired_layer_pivots": {
     "Feet": {
       "left": [

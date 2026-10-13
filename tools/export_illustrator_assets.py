@@ -1,8 +1,10 @@
-"""Export the PDF-compatible Illustrator layers as aligned transparent PNGs.
+"""Export top-level PDF-compatible Illustrator layers as aligned PNGs.
 
 Requires pypdf, Pillow, NumPy, and Poppler's pdftoppm executable. The active
-Illustrator layer visibility is ignored: each named optional-content layer is
-rendered on its own against a temporary magenta matte.
+top-level Illustrator layer visibility is ignored: each PDF optional-content
+group is rendered on its own against a temporary magenta matte. Illustrator
+sublayers are not PDF optional-content groups and remain composited together;
+use export_illustrator_sublayers.jsx for those.
 """
 
 from __future__ import annotations
@@ -181,6 +183,9 @@ def main() -> None:
         "canvas_size": list(target_size),
         "source_file": source.name,
         "raster_dpi": args.dpi,
+        "source_crop_bounds": list(bounds),
+        "export_scope": "PDF optional-content groups (top-level Illustrator layers)",
+        "nested_sublayers": "Composited together; use export_illustrator_sublayers.jsx to export visible sublayers.",
         "source_layer_order_back_to_front": names,
         "layer_files": exported,
         "empty_layers": empty,
