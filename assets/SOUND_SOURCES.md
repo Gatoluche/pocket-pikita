@@ -7,3 +7,6 @@ Mixkit's free sound-effects catalog under the Mixkit License:
 - `Squeak_Little.mp3`: Little squeak, item 1018
 
 Source page: https://mixkit.co/free-sound-effects/squeak/
+
+The brief electronic bump used for drag-toss impacts is synthesized at runtime
+from a damped tone and a short noise transient; it has no external source file.

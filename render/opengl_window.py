@@ -2,6 +2,7 @@
 
 import ctypes
 import json
+from array import array
 from ctypes import wintypes
 from dataclasses import replace
 import math
@@ -88,6 +89,12 @@ DRAG_REST_ANGLE = 0.15
 DRAG_REST_SPEED = 0.5
 MAX_SPRITE_SCALE = 1.55
 OVERLAY_FRAME_MARGIN = 32
+TOSS_MIN_SPEED = 140.0
+TOSS_MAX_SPEED = 1500.0
+TOSS_STOP_SPEED = 55.0
+TOSS_AIR_DRAG = 0.08
+TOSS_RESTITUTION = 0.24
+TOSS_TANGENT_DAMPING = 0.72
 
 
 def _normalize(name: str) -> str:
@@ -391,6 +398,11 @@ class OpenGLWindow(Renderer):
         self._drag_last_time = time.monotonic()
         self._drag_release_pause_until = self._drag_last_time
         self._drag_velocity_x = 0.0
+        self._drag_throw_velocity = (0.0, 0.0)
+        self._toss_velocity = (0.0, 0.0)
+        self._toss_position: tuple[float, float] | None = None
+        self._toss_active = False
+        self._recent_impact_sounds: list[tuple[pygame.mixer.Sound, pygame.mixer.Channel]] = []
         self._drag_angle = 0.0
         self._drag_target_angle = 0.0
         self._drag_angular_velocity = 0.0
@@ -563,6 +575,45 @@ class OpenGLWindow(Renderer):
         silence = b"\x00" * (round(frequency * silence_seconds) * channels * 2)
         return pygame.mixer.Sound(buffer=sound.get_raw() + silence)
 
+    def _play_impact_sound(self, impact_speed: float) -> None:
+        """Synthesize a short, speed-sensitive electronic bump."""
+        mixer = pygame.mixer.get_init()
+        if mixer is None:
+            return
+        frequency, sample_size, channels = mixer
+        if sample_size != -16:
+            return
+
+        strength = max(0.0, min(1.0, (impact_speed - 120.0) / 1100.0))
+        base_hz = 210.0 + strength * 260.0
+        duration = 0.22 - strength * 0.05
+        gain = 0.18 + strength * 0.42
+        sample_count = round(frequency * duration)
+        samples = array("h")
+        for index in range(sample_count):
+            elapsed = index / frequency
+            phase = 2.0 * math.pi * (
+                base_hz * elapsed
+                + (75.0 / 24.0) * (1.0 - math.exp(-elapsed * 24.0))
+            )
+            envelope = math.exp(-elapsed * (17.0 + strength * 7.0))
+            click = random.uniform(-1.0, 1.0) * math.exp(-elapsed * 90.0) * 0.28
+            tone = math.sin(phase) * 0.72 + math.sin(phase * 2.4) * 0.16
+            sample = round(32767 * gain * (tone * envelope + click))
+            sample = max(-32768, min(32767, sample))
+            samples.extend([sample] * channels)
+
+        sound = pygame.mixer.Sound(buffer=samples.tobytes())
+        sound.set_volume(0.35 + strength * 0.5)
+        channel = sound.play()
+        if channel is not None:
+            self._recent_impact_sounds = [
+                (active_sound, active_channel)
+                for active_sound, active_channel in self._recent_impact_sounds
+                if active_channel.get_busy()
+            ]
+            self._recent_impact_sounds.append((sound, channel))
+
     def _sprite_key_for(self, intent: PetIntent) -> str:
         expression = intent.expression.value
         candidates = []
@@ -592,6 +643,8 @@ class OpenGLWindow(Renderer):
         now = time.monotonic()
         if self._left_drag is not None:
             motion_velocity_x = self._drag_velocity_x
+        elif self._toss_active:
+            motion_velocity_x = self._toss_velocity[0]
         elif self._is_walking():
             roam_x = self._roam_velocity[0]
             motion_velocity_x = roam_x if abs(roam_x) > 1.0 else roam_x * 220.0
@@ -982,6 +1035,8 @@ class OpenGLWindow(Renderer):
     def _handle_mouse_up(self, button: int) -> bool:
         if button == 1 and self._left_origin is not None:
             poked = self._left_max_move < DRAG_THRESHOLD
+            if not poked:
+                self._start_toss_from_release()
             self._left_origin = None
             self._left_drag = None
             self._drag_cursor = None
@@ -1016,6 +1071,10 @@ class OpenGLWindow(Renderer):
         self._drag_last_time = now
         self._drag_physics_time = now
         self._drag_velocity_x = 0.0
+        self._drag_throw_velocity = (0.0, 0.0)
+        self._toss_velocity = (0.0, 0.0)
+        self._toss_position = None
+        self._toss_active = False
         self._drag_angular_velocity = 0.0
         self._drag_release_pending = False
         self._roam_velocity = (0.0, 0.0)
@@ -1047,8 +1106,14 @@ class OpenGLWindow(Renderer):
         if self._drag_last_cursor is not None:
             elapsed = max(now - self._drag_last_time, 0.001)
             velocity_x = (cursor_x - self._drag_last_cursor[0]) / elapsed
+            velocity_y = (cursor_y - self._drag_last_cursor[1]) / elapsed
             smoothing = 1.0 - math.exp(-elapsed * 18.0)
             self._drag_velocity_x += (velocity_x - self._drag_velocity_x) * smoothing
+            throw_x, throw_y = self._drag_throw_velocity
+            self._drag_throw_velocity = (
+                throw_x + (velocity_x - throw_x) * smoothing,
+                throw_y + (velocity_y - throw_y) * smoothing,
+            )
         self._drag_last_cursor = (cursor_x, cursor_y)
         self._drag_cursor = (cursor_x, cursor_y)
         self._drag_last_time = now
@@ -1063,6 +1128,27 @@ class OpenGLWindow(Renderer):
             0,
             0x1 | 0x4,
         )
+
+    def _start_toss_from_release(self) -> None:
+        now = time.monotonic()
+        age = max(0.0, now - self._drag_last_time)
+        freshness = math.exp(-age * 7.0)
+        velocity_x, velocity_y = self._drag_throw_velocity
+        velocity_x *= freshness
+        velocity_y *= freshness
+        speed = math.hypot(velocity_x, velocity_y)
+        if speed < TOSS_MIN_SPEED:
+            self._toss_active = False
+            self._toss_velocity = (0.0, 0.0)
+            self._toss_position = None
+            return
+
+        scale = min(1.0, TOSS_MAX_SPEED / speed)
+        self._toss_velocity = (velocity_x * scale, velocity_y * scale)
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        self._toss_position = (float(window.left), float(window.top))
+        self._toss_active = True
 
     def _anchor_dragged_sprite(self, intent: PetIntent) -> None:
         """Keep the exact grabbed point beneath the cursor as Pikita swings."""
@@ -1097,6 +1183,7 @@ class OpenGLWindow(Renderer):
         if (
             self._left_drag is not None
             or self._right_origin is not None
+            or self._toss_active
             or now < self._drag_release_pause_until
             or abs(self._drag_angle) >= DRAG_REST_ANGLE
             or abs(self._drag_angular_velocity) >= DRAG_REST_SPEED
@@ -1453,6 +1540,113 @@ class OpenGLWindow(Renderer):
             if self._desktop_transparent else (self._width, self._height),
         )
 
+    def _advance_toss(self, dt: float, now: float) -> None:
+        if not self._toss_active or dt <= 0.0:
+            return
+
+        window = _Rect()
+        self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
+        sprite_left, sprite_top, sprite_width, sprite_height = self._last_sprite_rect
+        visible = _Rect(
+            round(window.left + sprite_left),
+            round(window.top + sprite_top),
+            round(window.left + sprite_left + sprite_width),
+            round(window.top + sprite_top + sprite_height),
+        )
+        monitors = self._monitor_rects()
+        monitor = self._monitor_for_window(visible, monitors)
+        if monitor is None and monitors:
+            center_x = (visible.left + visible.right) / 2
+            center_y = (visible.top + visible.bottom) / 2
+
+            def distance_to_monitor(candidate: _Rect) -> float:
+                dx = max(candidate.left - center_x, 0.0, center_x - candidate.right)
+                dy = max(candidate.top - center_y, 0.0, center_y - candidate.bottom)
+                return dx * dx + dy * dy
+
+            monitor = min(monitors, key=distance_to_monitor)
+        if monitor is None:
+            self._toss_active = False
+            self._toss_velocity = (0.0, 0.0)
+            self._toss_position = None
+            return
+
+        minimum_x = float(monitor.left - sprite_left)
+        maximum_x = float(monitor.right - sprite_left - sprite_width)
+        minimum_y = float(monitor.top - sprite_top)
+        maximum_y = float(monitor.bottom - sprite_top - sprite_height)
+        if maximum_x < minimum_x:
+            minimum_x = maximum_x = (
+                monitor.left
+                + (monitor.right - monitor.left - sprite_width) / 2
+                - sprite_left
+            )
+        if maximum_y < minimum_y:
+            minimum_y = maximum_y = (
+                monitor.top
+                + (monitor.bottom - monitor.top - sprite_height) / 2
+                - sprite_top
+            )
+
+        position_x, position_y = self._toss_position or (
+            float(window.left), float(window.top)
+        )
+        velocity_x, velocity_y = self._toss_velocity
+        next_x = position_x + velocity_x * dt
+        next_y = position_y + velocity_y * dt
+        impact_x = impact_y = 0.0
+
+        if next_x < minimum_x:
+            next_x = minimum_x
+            impact_x = abs(velocity_x)
+            velocity_x = -velocity_x * TOSS_RESTITUTION
+            velocity_y *= TOSS_TANGENT_DAMPING
+        elif next_x > maximum_x:
+            next_x = maximum_x
+            impact_x = abs(velocity_x)
+            velocity_x = -velocity_x * TOSS_RESTITUTION
+            velocity_y *= TOSS_TANGENT_DAMPING
+
+        if next_y < minimum_y:
+            next_y = minimum_y
+            impact_y = abs(velocity_y)
+            velocity_y = -velocity_y * TOSS_RESTITUTION
+            velocity_x *= TOSS_TANGENT_DAMPING
+        elif next_y > maximum_y:
+            next_y = maximum_y
+            impact_y = abs(velocity_y)
+            velocity_y = -velocity_y * TOSS_RESTITUTION
+            velocity_x *= TOSS_TANGENT_DAMPING
+
+        impact_speed = math.hypot(impact_x, impact_y)
+        if impact_speed > 35.0:
+            self._play_impact_sound(impact_speed)
+            self._attention_expression = Expression.UNIMPRESSED
+            self._attention_until = now + 0.45
+
+        drag = math.exp(-TOSS_AIR_DRAG * dt)
+        velocity_x *= drag
+        velocity_y *= drag
+        self._toss_velocity = (velocity_x, velocity_y)
+        self._toss_position = (next_x, next_y)
+        self._user.SetWindowPos(
+            self._hwnd,
+            0,
+            round(next_x),
+            round(next_y),
+            0,
+            0,
+            0x1 | 0x4,
+        )
+
+        if math.hypot(velocity_x, velocity_y) < TOSS_STOP_SPEED:
+            self._toss_active = False
+            self._toss_velocity = (0.0, 0.0)
+            self._toss_position = None
+            self._drag_release_pause_until = max(
+                self._drag_release_pause_until, now + 0.7
+            )
+
     def _update_drag_physics(self) -> None:
         now = time.monotonic()
         dt = min(now - self._drag_physics_time, 0.05)
@@ -1493,6 +1687,7 @@ class OpenGLWindow(Renderer):
                 self._drag_release_pending = False
                 self._drag_release_pause_until = now + random.uniform(1.2, 2.0)
                 self._roam_remaining = random.uniform(4.0, 8.0)
+        self._advance_toss(dt, now)
 
     def pump_events(self) -> FrameInput:
         quit_ = poked = False

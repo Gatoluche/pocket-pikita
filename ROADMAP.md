@@ -14,14 +14,13 @@
 - Keep the ear roots covered while they move and use a soft bloom pass for LED
   flashes.
 
-## Next: tossed movement and impact response
+## Implemented: drag toss and screen-edge impact
 
-- Carry measured cursor velocity into Pikita when a drag ends, so a fast
-  release tosses him across the desktop.
-- Integrate the toss with a bounded, damped physics model and detect impacts
-  against desktop or monitor edges (and other supported obstacles).
-- Play an impact sound when he hits something; choose its volume and pitch from
-  the impact speed, then settle or rebound him in a controlled way.
+- A fast release carries smoothed cursor velocity into Pikita as a bounded,
+  damped toss.
+- The visible sprite stays within its monitor, rebounds on impact, and plays a
+  speed-sensitive synthesized electronic bump.
+- Other desktop windows are not collision surfaces yet.
 
 ## Later: authored animation and attention
 
