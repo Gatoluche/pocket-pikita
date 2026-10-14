@@ -425,6 +425,7 @@ class IllustratorRig:
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
         motion_velocity_x: float = 0.0,
+        walk_seconds: float | None = None,
     ) -> pygame.Surface:
         """Return one assembled frame while preserving the selected PNG face."""
         if self._independent is not None:
@@ -440,6 +441,7 @@ class IllustratorRig:
                 ear_flick_right=ear_flick_right,
                 ear_led_pulse=ear_led_pulse,
                 motion_velocity_x=motion_velocity_x,
+                walk_seconds=walk_seconds,
             )
         canvas = pygame.Surface(
             (self._width, self._height), pygame.SRCALPHA, 32
@@ -447,7 +449,7 @@ class IllustratorRig:
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
         idle = 1.0 - strength
         idle_motion = IDLE_CLIP.sample(seconds)
-        walk_motion = WALK_CLIP.sample(seconds)
+        walk_motion = WALK_CLIP.sample(seconds if walk_seconds is None else walk_seconds)
 
         feet_left = walk_motion.get("feet_left", 0.0) * strength + idle_motion["feet_left"] * idle
         feet_right = walk_motion.get("feet_right", 0.0) * strength + idle_motion["feet_right"] * idle

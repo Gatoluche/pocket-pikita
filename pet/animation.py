@@ -123,23 +123,31 @@ IDLE_GLANCE_CLIP = AnimationClip(
 
 WALK_CLIP = AnimationClip(
     "walk",
-    1.2,
+    0.8,
     {
         "feet_left": (
-            Keyframe(0.0, 0.0), Keyframe(0.3, 8.0), Keyframe(0.6, 0.0),
-            Keyframe(0.9, -8.0), Keyframe(1.2, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, 2.2), Keyframe(0.4, 0.0),
+            Keyframe(0.6, -2.2), Keyframe(0.8, 0.0),
         ),
         "feet_right": (
-            Keyframe(0.0, -8.0), Keyframe(0.3, 0.0), Keyframe(0.6, 8.0),
-            Keyframe(0.9, 0.0), Keyframe(1.2, -8.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, -2.2), Keyframe(0.4, 0.0),
+            Keyframe(0.6, 2.2), Keyframe(0.8, 0.0),
         ),
         "arm_left": (
-            Keyframe(0.0, 0.0), Keyframe(0.3, -12.0), Keyframe(0.6, 0.0),
-            Keyframe(0.9, 12.0), Keyframe(1.2, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, -0.9), Keyframe(0.4, 0.0),
+            Keyframe(0.6, 0.9), Keyframe(0.8, 0.0),
         ),
         "arm_right": (
-            Keyframe(0.0, 0.0), Keyframe(0.3, 12.0), Keyframe(0.6, 0.0),
-            Keyframe(0.9, -12.0), Keyframe(1.2, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, 0.9), Keyframe(0.4, 0.0),
+            Keyframe(0.6, -0.9), Keyframe(0.8, 0.0),
+        ),
+        "body_sway": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, 1.6), Keyframe(0.4, 0.0),
+            Keyframe(0.6, -1.6), Keyframe(0.8, 0.0),
+        ),
+        "body_bob": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, -2.8), Keyframe(0.4, 0.0),
+            Keyframe(0.6, -2.8), Keyframe(0.8, 0.0),
         ),
     },
     loop=True,

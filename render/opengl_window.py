@@ -49,6 +49,7 @@ from pygame.locals import DOUBLEBUF, OPENGL
 
 from input.events import FrameInput
 from desktop_icons import DesktopIcon, DesktopIcons
+from pet.animation import WALK_CLIP
 from pet.eye_tracking import EyeTarget, EyeTracker
 from pet.intent import Expression, PetIntent, Sound
 from render.illustrator_rig import IllustratorRig
@@ -122,16 +123,16 @@ def _squish_from_drag(
 
 
 def _walk_offset(walking: bool, seconds: float, strength: float = 1.0) -> tuple[float, float]:
-    """A small gait that gives a static sprite a sense of weight and motion."""
+    """Use the same restrained, walk-relative bounce as the limb animation."""
     if not walking:
         return 0.0, 0.0
-    step = math.sin(seconds * 11.0)
-    return step * 9.0 * strength, -abs(step) * 11.0 * strength
+    gait = WALK_CLIP.sample(seconds)
+    return gait["body_sway"] * strength, gait["body_bob"] * strength
 
 
 def _walk_speed_scale(seconds: float) -> float:
-    """Match forward motion to the gait so he moves in visible little steps."""
-    return 0.45 + 0.55 * abs(math.sin(seconds * 11.0))
+    """Keep the travel speed smooth instead of pulsing with app uptime."""
+    return 1.0
 
 
 def _grab_angle(grab: tuple[int, int], size: tuple[int, int], velocity_x: float) -> float:
@@ -608,6 +609,7 @@ class OpenGLWindow(Renderer):
             ear_flick_right=intent.ear_flick_right,
             ear_led_pulse=intent.ear_led_pulse,
             motion_velocity_x=motion_velocity_x,
+            walk_seconds=max(0.0, now - self._walk_started),
         )
 
     def _can_track_eyes(self, intent: PetIntent) -> bool:
@@ -792,8 +794,11 @@ class OpenGLWindow(Renderer):
         elif self._is_inspecting():
             sway, bob = 8.0, -3.0
         else:
+            now = time.monotonic()
             sway, bob = _walk_offset(
-                self._is_walking(), time.monotonic(), self._walk_strength()
+                self._is_walking(),
+                max(0.0, now - self._walk_started),
+                self._walk_strength(now),
             )
         width = sprite_width * width_scale
         height = sprite_height * height_scale
@@ -878,6 +883,16 @@ class OpenGLWindow(Renderer):
             return False
         self._snack_target = icon
         self._walk_kind = "snack"
+        window_center = (
+            (window.left + window.right) / 2,
+            (window.top + window.bottom) / 2,
+        )
+        travel = math.hypot(
+            icon.center[0] - window_center[0],
+            icon.center[1] - window_center[1],
+        )
+        self._walk_started = now
+        self._walk_duration = max(0.8, travel / 220.0)
         self._attention_expression = Expression.HAPPY
         self._attention_until = now + 1.2
         return True

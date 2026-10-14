@@ -7,6 +7,8 @@
 - Keep the Illustrator export reproducible and preserve the source document.
 - Apply damped inertia to parts while Pikita is dragged or moves around. Let
   authored walk clips control his arms and feet during a walk.
+- Keep the walking cycle phase tied to each walk, with small alternating foot
+  steps and only a restrained counter-motion in his folded arms.
 - Export complete pupil disks and shines, then clip each moving eye to its
   fixed eye aperture inside the application.
 - Keep the ear roots covered while they move and use a soft bloom pass for LED

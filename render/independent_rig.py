@@ -234,6 +234,7 @@ class IndependentPartRig:
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
         motion_velocity_x: float = 0.0,
+        walk_seconds: float | None = None,
     ) -> pygame.Surface:
         now = time.monotonic()
         dt = 1.0 / 60.0 if self._last_compose_time is None else max(
@@ -242,7 +243,7 @@ class IndependentPartRig:
         self._last_compose_time = now
         self._frame_angles.clear()
         idle = IDLE_CLIP.sample(seconds)
-        walk = WALK_CLIP.sample(seconds)
+        walk = WALK_CLIP.sample(seconds if walk_seconds is None else walk_seconds)
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
         canvas = pygame.Surface((self.width, self.height), pygame.SRCALPHA, 32)
         face = self._face_with_gaze(expression_surface, gaze_x, gaze_y)
