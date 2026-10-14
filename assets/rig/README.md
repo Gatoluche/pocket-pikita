@@ -22,14 +22,17 @@ these top-level exports.
 To export visible nested layers and artwork groups separately, open the source
 file in Illustrator and choose **File → Scripts → Other Script**, then select
 `tools/export_illustrator_sublayers.jsx`. It writes aligned 446×910 transparent
-PNGs under `assets/rig/sublayers/`, plus group-level exports under its `groups/`
-folder. `manifest.json` records the Illustrator layer path, group path, output
-file, and page-item count for each export. The script opens a temporary copy
-and closes it without saving, so it does not change the source document.
+PNGs under `assets/rig/sublayers/`, group-level exports under `groups/`, and
+individual Illustrator objects under `objects/`. Each object export is
+isolated from its siblings and keeps its aligned position on the 446×910
+canvas. `manifest.json` records the Illustrator layer path, group path, object
+type, and output file. The script opens a temporary copy and closes it without
+saving, so it does not change the source document.
 
 The first run produced fully transparent images for the nested layer entries.
-The updated exporter records ancestry while walking the layer tree and also
-exports visible artwork groups, which can expose parts inside those layers.
-Rerun the script in Illustrator to regenerate the exports and manifest; this
-cannot be done from the command line because Illustrator must rasterize the
-document.
+The updated exporter records ancestry while walking the layer tree, excludes
+artwork on parent layers from nested-layer exports, and exports individual
+visible artwork objects. These object PNGs can split eye glints and hair blocks
+when they are separate Illustrator objects. Rerun the script in Illustrator
+to regenerate the exports and manifest; this cannot be done from the command
+line because Illustrator must rasterize the document.

@@ -13,8 +13,10 @@
     var allLayers = [];
     var allPageItems = [];
     var visibleGroups = [];
+    var visibleObjects = [];
     var exportEntries = [];
     var groupEntries = [];
+    var objectEntries = [];
     var bounds = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY,
                   Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY];
 
@@ -210,6 +212,36 @@
         };
     }
 
+    function itemOutputPath(layerRecord, item, index) {
+        var names = groupPath(item);
+        var folder = new Folder(outputFolder.fsName + "/objects");
+        ensureFolder(folder);
+        for (var i = 0; i < layerRecord.path.length; i++) {
+            folder = new Folder(folder.fsName + "/" + slug(layerRecord.path[i], "layer_" + i));
+            ensureFolder(folder);
+        }
+        for (var j = 0; j < names.length; j++) {
+            folder = new Folder(folder.fsName + "/" + slug(names[j], "group"));
+            ensureFolder(folder);
+        }
+        var itemName = "";
+        try { itemName = item.name; } catch (e) {}
+        var filename = "item_" + padNumber(index + 1, 5) + "_" +
+            slug(item.typename, "item") + "_" + slug(itemName, "unnamed") + ".png";
+        var relativeParts = ["objects"];
+        for (var k = 0; k < layerRecord.path.length; k++) {
+            relativeParts.push(slug(layerRecord.path[k], "layer_" + k));
+        }
+        for (var m = 0; m < names.length; m++) {
+            relativeParts.push(slug(names[m], "group"));
+        }
+        relativeParts.push(filename);
+        return {
+            file: new File(folder.fsName + "/" + filename),
+            relative: relativeParts.join("/")
+        };
+    }
+
     function measureContent() {
         for (var i = 0; i < doc.pageItems.length; i++) {
             var item = doc.pageItems[i];
@@ -245,10 +277,31 @@
                 recordIsUnder(targetRecord, record);
             record.layer.visible = record.visible && partOfTargetTree;
         }
+
+        for (var j = 0; j < allPageItems.length; j++) {
+            var entry = allPageItems[j];
+            entry.item.hidden = entry.hidden;
+            var ownerRecord = findRecord(itemLayer(entry.item));
+            if (!ownerRecord || !recordIsUnder(ownerRecord, targetRecord)) {
+                entry.item.hidden = true;
+            }
+        }
+
+        for (var k = 0; k < allPageItems.length; k++) {
+            var targetItem = allPageItems[k].item;
+            var targetOwner = findRecord(itemLayer(targetItem));
+            if (!targetOwner || !recordIsUnder(targetOwner, targetRecord) || allPageItems[k].hidden) continue;
+            for (var m = 0; m < allPageItems.length; m++) {
+                var possibleMask = allPageItems[m];
+                if (isRequiredClipMask(possibleMask.item, targetItem)) {
+                    possibleMask.item.hidden = possibleMask.hidden;
+                }
+            }
+        }
     }
 
-    function isolateGroup(group) {
-        var targetLayer = findRecord(itemLayer(group));
+    function isolateItem(item) {
+        var targetLayer = findRecord(itemLayer(item));
         for (var i = 0; i < allLayers.length; i++) {
             var record = allLayers[i];
             record.layer.visible = record.visible && recordIsUnder(targetLayer, record);
@@ -260,8 +313,8 @@
         }
         for (var k = 0; k < allPageItems.length; k++) {
             var candidate = allPageItems[k].item;
-            var keep = isItemUnder(candidate, group) || isItemUnder(group, candidate) ||
-                isRequiredClipMask(candidate, group);
+            var keep = isItemUnder(candidate, item) || isItemUnder(item, candidate) ||
+                isRequiredClipMask(candidate, item);
             if (!keep) allPageItems[k].item.hidden = true;
         }
     }
@@ -300,7 +353,7 @@
 
     function exportGroup(group, index) {
         var ownerRecord = findRecord(itemLayer(group));
-        isolateGroup(group);
+        isolateItem(group);
         var output = groupOutputPath(ownerRecord, group, index);
         var options = new ExportOptionsPNG24();
         options.antiAliasing = true;
@@ -315,6 +368,29 @@
             group_path: groupPath(group),
             file: output.relative,
             page_item_count: countItemsInGroup(group)
+        });
+    }
+
+    function exportObject(item, index) {
+        var ownerRecord = findRecord(itemLayer(item));
+        isolateItem(item);
+        var output = itemOutputPath(ownerRecord, item, index);
+        var options = new ExportOptionsPNG24();
+        options.antiAliasing = true;
+        options.transparency = true;
+        options.artBoardClipping = true;
+        options.horizontalScale = (CANVAS_WIDTH / (bounds[2] - bounds[0])) * 100;
+        options.verticalScale = (CANVAS_HEIGHT / (bounds[1] - bounds[3])) * 100;
+        doc.exportFile(output.file, ExportType.PNG24, options);
+
+        var itemName = "";
+        try { itemName = item.name; } catch (e) {}
+        objectEntries.push({
+            layer_path: ownerRecord.path,
+            group_path: groupPath(item),
+            item_type: item.typename,
+            item_name: itemName,
+            file: output.relative
         });
     }
 
@@ -354,6 +430,24 @@
                 ", \"page_item_count\": " + groupEntry.page_item_count + "}");
             file.write(k + 1 == groupEntries.length ? "\n" : ",\n");
         }
+        file.write("  ],\n  \"object_exports\": [\n");
+        for (var p = 0; p < objectEntries.length; p++) {
+            var objectEntry = objectEntries[p];
+            file.write("    {\"layer_path\": [");
+            for (var q = 0; q < objectEntry.layer_path.length; q++) {
+                if (q) file.write(", ");
+                file.write(jsonString(objectEntry.layer_path[q]));
+            }
+            file.write("], \"group_path\": [");
+            for (var r = 0; r < objectEntry.group_path.length; r++) {
+                if (r) file.write(", ");
+                file.write(jsonString(objectEntry.group_path[r]));
+            }
+            file.write("], \"item_type\": " + jsonString(objectEntry.item_type) +
+                ", \"item_name\": " + jsonString(objectEntry.item_name) +
+                ", \"file\": " + jsonString(objectEntry.file) + "}");
+            file.write(p + 1 == objectEntries.length ? "\n" : ",\n");
+        }
         file.write("  ]\n}\n");
         file.close();
     }
@@ -383,13 +477,24 @@
             exportGroup(visibleGroups[exportGroupIndex], exportGroupIndex);
         }
 
+        for (var objectIndex = 0; objectIndex < allPageItems.length; objectIndex++) {
+            var objectItem = allPageItems[objectIndex].item;
+            if (objectItem.typename == "GroupItem" || !includeItem(objectItem)) continue;
+            visibleObjects.push({ item: objectItem, index: objectIndex });
+        }
+        for (var exportObjectIndex = 0; exportObjectIndex < visibleObjects.length; exportObjectIndex++) {
+            var objectRecord = visibleObjects[exportObjectIndex];
+            exportObject(objectRecord.item, objectRecord.index);
+        }
+
         writeManifest();
         doc.close(SaveOptions.DONOTSAVECHANGES);
         doc = null;
         workingCopy.remove();
         app.userInteractionLevel = oldInteractionLevel;
-        alert("Exported " + exportEntries.length + " visible Illustrator layers and sublayers, plus " +
-            groupEntries.length + " artwork groups, to:\n" + outputFolder.fsName);
+        alert("Exported " + exportEntries.length + " visible Illustrator layers and sublayers, " +
+            groupEntries.length + " artwork groups, and " + objectEntries.length +
+            " individual artwork objects to:\n" + outputFolder.fsName);
     } catch (error) {
         try { if (doc) doc.close(SaveOptions.DONOTSAVECHANGES); } catch (closeError) {}
         try { if (workingCopy.exists) workingCopy.remove(); } catch (removeError) {}
