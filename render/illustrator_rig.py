@@ -376,8 +376,10 @@ class IllustratorRig:
         canvas.blit(self._layers["Bottom Hair"], (0, 0))
 
         ear_scale = 1.0 + 0.4 * strength
-        ear_left = idle_motion["ear_left"] * ear_scale + ear_flick_left
-        ear_right = idle_motion["ear_right"] * ear_scale + ear_flick_right
+        # A slight shared tilt lets the ears follow the direction of attention.
+        gaze_turn = -2.0 * max(-1.0, min(1.0, gaze_x))
+        ear_left = idle_motion["ear_left"] * ear_scale + ear_flick_left + gaze_turn
+        ear_right = idle_motion["ear_right"] * ear_scale + ear_flick_right + gaze_turn
         if jumping:
             ear_left -= 3.0
             ear_right += 3.0
