@@ -46,3 +46,11 @@ so the strands do not leave duplicate edges behind. If those object exports
 are missing or incomplete, the renderer falls back to the static top-hair
 layer. The separated ear LED objects also pulse briefly during idle scanning
 glances, shifting to a warm amber that follows each ear's movement.
+
+To build the eye-tracking images, run `python tools/build_eye_tracking_assets.py`
+after exporting the Illustrator sublayers. The script takes the separate pupil
+disk and shine objects from the Angy eye spare, combines them on the aligned
+canvas, and fills their original positions with the cyan sampled from the
+canonical `Base.png`. The renderer moves the disk and shine together while the
+top hair remains in front. Tracking is applied to the open Base expression;
+other expressions and the supplied blink sprites keep their own artwork.

@@ -1,0 +1,35 @@
+{
+  "canvas_size": [
+    446,
+    910
+  ],
+  "base_sprite": "assets\\Base.png",
+  "pupil_source_layers": {
+    "left": [
+      "Eyes",
+      "Angy",
+      "Left"
+    ],
+    "right": [
+      "Eyes",
+      "Angy",
+      "Right"
+    ]
+  },
+  "eye_fill_colors": {
+    "left": [
+      0,
+      255,
+      250
+    ],
+    "right": [
+      0,
+      255,
+      250
+    ]
+  },
+  "pupil_components": [
+    "Pupil",
+    "Glint"
+  ]
+}
