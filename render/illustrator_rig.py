@@ -51,6 +51,8 @@ class IllustratorRig:
         self._masked_faces: dict[int, pygame.Surface] = {}
         self._gaze_base: pygame.Surface | None = None
         self._pupils: pygame.Surface | None = None
+        self._cached_gaze_offset: tuple[int, int] | None = None
+        self._cached_gazed_face: pygame.Surface | None = None
         gaze_dir = rig_dir / "eyes"
         gaze_base_path = gaze_dir / "base_without_pupils.png"
         pupils_path = gaze_dir / "pupils.png"
@@ -71,6 +73,16 @@ class IllustratorRig:
                     f"Eye tracking images must both use the {self._width}x{self._height} "
                     "rig canvas"
                 )
+            self._gaze_base.blit(
+                self._face_mask,
+                (0, 0),
+                special_flags=pygame.BLEND_RGBA_MULT,
+            )
+            self._pupils.blit(
+                self._face_mask,
+                (0, 0),
+                special_flags=pygame.BLEND_RGBA_MULT,
+            )
         self._parts = {
             layer_name: {
                 side: self._make_part(layer_name, side, pivot)
@@ -284,11 +296,15 @@ class IllustratorRig:
         )
         if offset == (0, 0):
             return self._face_for(expression_surface)
+        if (
+            offset == self._cached_gaze_offset
+            and self._cached_gazed_face is not None
+        ):
+            return self._cached_gazed_face
         face = self._gaze_base.copy()
-        face.blit(self._face_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        pupils = self._pupils.copy()
-        pupils.blit(self._face_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        face.blit(pupils, offset)
+        face.blit(self._pupils, offset)
+        self._cached_gaze_offset = offset
+        self._cached_gazed_face = face
         return face
 
     @staticmethod
