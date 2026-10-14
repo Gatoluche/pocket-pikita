@@ -90,7 +90,10 @@
     }
 
     function setItemHidden(item, hidden) {
-        if (item.hidden != hidden) item.hidden = hidden;
+        if (item.hidden != hidden) {
+            unlockItemAndParents(item);
+            item.hidden = hidden;
+        }
     }
 
     function unlockItemAndParents(item) {
@@ -317,11 +320,9 @@
     }
 
     function isolateLayer(targetRecord) {
+        // Restore the source-visible layer tree before editing its page items.
         for (var i = 0; i < allLayers.length; i++) {
-            var record = allLayers[i];
-            var partOfTargetTree = recordIsUnder(record, targetRecord) ||
-                recordIsUnder(targetRecord, record);
-            setLayerVisible(record.layer, record.visible && partOfTargetTree);
+            setLayerVisible(allLayers[i].layer, allLayers[i].visible);
         }
 
         for (var j = 0; j < allPageItems.length; j++) {
@@ -344,13 +345,19 @@
                 }
             }
         }
+
+        for (var layerIndex = 0; layerIndex < allLayers.length; layerIndex++) {
+            var record = allLayers[layerIndex];
+            var partOfTargetTree = recordIsUnder(record, targetRecord) ||
+                recordIsUnder(targetRecord, record);
+            setLayerVisible(record.layer, record.visible && partOfTargetTree);
+        }
     }
 
     function isolateItem(item) {
         var targetLayer = findRecord(itemLayer(item));
         for (var i = 0; i < allLayers.length; i++) {
-            var record = allLayers[i];
-            setLayerVisible(record.layer, record.visible && recordIsUnder(targetLayer, record));
+            setLayerVisible(allLayers[i].layer, allLayers[i].visible);
         }
 
         for (var j = 0; j < allPageItems.length; j++) {
@@ -362,6 +369,11 @@
             var keep = isItemUnder(candidate, item) || isItemUnder(item, candidate) ||
                 isRequiredClipMask(candidate, item);
             if (!keep && allPageItems[k].sourceVisible) setItemHidden(allPageItems[k].item, true);
+        }
+
+        for (var layerIndex = 0; layerIndex < allLayers.length; layerIndex++) {
+            var record = allLayers[layerIndex];
+            setLayerVisible(record.layer, record.visible && recordIsUnder(targetLayer, record));
         }
     }
 
