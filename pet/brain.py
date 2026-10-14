@@ -7,6 +7,8 @@ from pet.intent import Expression, PetIntent, Sound
 
 BLINK_DURATION = 0.12         # how long the eyes stay shut, in seconds
 MIN_GAP, MAX_GAP = 2.0, 5.0   # range between blinks, in seconds
+DOUBLE_BLINK_CHANCE = 0.14
+DOUBLE_BLINK_MIN_GAP, DOUBLE_BLINK_MAX_GAP = 0.10, 0.18
 REACTION_DURATION = 0.6       # how long a poke reaction lasts, in seconds
 MIN_IDLE_GAP, MAX_IDLE_GAP = 7.0, 14.0
 MIN_EAR_FLICK_GAP, MAX_EAR_FLICK_GAP = 4.5, 8.0
@@ -24,6 +26,8 @@ class Brain:
         self._eyes_shut = False
         self._timer = 0.0
         self._gap = random.uniform(MIN_GAP, MAX_GAP)
+        self._double_blink_pending = False
+        self._double_blink_followup = False
         self._reacting = 0.0  # seconds of poke reaction left
         self._reaction_expression = Expression.HAPPY
         self._idle_expression = Expression.BASE
@@ -39,6 +43,17 @@ class Brain:
         self._idle_glance_direction = (1.0, 0.0)
 
     def _interrupt_idle_motion(self) -> None:
+        interrupted_blink = (
+            self._eyes_shut
+            or self._double_blink_pending
+            or self._double_blink_followup
+        )
+        if interrupted_blink:
+            self._eyes_shut = False
+            self._timer = 0.0
+            self._gap = random.uniform(MIN_GAP, MAX_GAP)
+        self._double_blink_pending = False
+        self._double_blink_followup = False
         self._ear_flick_elapsed = None
         self._ear_flick_cooldown = random.uniform(MIN_EAR_FLICK_GAP, MAX_EAR_FLICK_GAP)
         self._idle_glance_elapsed = None
@@ -145,10 +160,23 @@ class Brain:
             if self._timer >= BLINK_DURATION:
                 self._eyes_shut = False
                 self._timer = 0.0
-                self._gap = random.uniform(MIN_GAP, MAX_GAP)
+                if self._double_blink_pending:
+                    self._double_blink_pending = False
+                    self._double_blink_followup = True
+                    self._gap = random.uniform(
+                        DOUBLE_BLINK_MIN_GAP, DOUBLE_BLINK_MAX_GAP
+                    )
+                else:
+                    self._gap = random.uniform(MIN_GAP, MAX_GAP)
         elif self._timer >= self._gap:
             self._eyes_shut = True
             self._timer = 0.0
+            if self._double_blink_followup:
+                self._double_blink_followup = False
+            else:
+                self._double_blink_pending = (
+                    random.random() < DOUBLE_BLINK_CHANCE
+                )
 
         idle_motion = self._idle_motion(dt)
         idle_motion.update(self._idle_glance(dt))
