@@ -291,6 +291,56 @@
         };
     }
 
+    function exportPng(file) {
+        var options = new ExportOptionsPNG24();
+        options.antiAliasing = true;
+        options.transparency = true;
+        options.artBoardClipping = true;
+        options.horizontalScale = (CANVAS_WIDTH / (bounds[2] - bounds[0])) * 100;
+        options.verticalScale = (CANVAS_HEIGHT / (bounds[1] - bounds[3])) * 100;
+        doc.exportFile(file, ExportType.PNG24, options);
+    }
+
+    function isClipMask(item) {
+        try { return item.clipping === true; } catch (e) { return false; }
+    }
+
+    function exportClipMask(item, file) {
+        // A clipping path is intentionally invisible in the Illustrator art.
+        // In the temporary copy, turn it into a white filled silhouette so
+        // the same aligned export can be used as a runtime alpha mask.
+        var parentGroup = item.parent;
+        var original = {
+            clipping: item.clipping,
+            filled: item.filled,
+            stroked: item.stroked,
+            fillColor: item.fillColor,
+            opacity: item.opacity,
+            groupClipped: parentGroup.clipped
+        };
+        var white = new RGBColor();
+        white.red = 255;
+        white.green = 255;
+        white.blue = 255;
+        try {
+            parentGroup.clipped = false;
+            item.clipping = false;
+            item.hidden = false;
+            item.filled = true;
+            item.fillColor = white;
+            item.stroked = false;
+            item.opacity = 100;
+            exportPng(file);
+        } finally {
+            item.clipping = original.clipping;
+            item.filled = original.filled;
+            item.stroked = original.stroked;
+            item.fillColor = original.fillColor;
+            item.opacity = original.opacity;
+            parentGroup.clipped = original.groupClipped;
+        }
+    }
+
     function measureContent() {
         for (var i = 0; i < doc.pageItems.length; i++) {
             var item = doc.pageItems[i];
@@ -433,13 +483,9 @@
         var ownerRecord = findRecord(itemLayer(item));
         isolateItem(item);
         var output = itemOutputPath(ownerRecord, item, index);
-        var options = new ExportOptionsPNG24();
-        options.antiAliasing = true;
-        options.transparency = true;
-        options.artBoardClipping = true;
-        options.horizontalScale = (CANVAS_WIDTH / (bounds[2] - bounds[0])) * 100;
-        options.verticalScale = (CANVAS_HEIGHT / (bounds[1] - bounds[3])) * 100;
-        doc.exportFile(output.file, ExportType.PNG24, options);
+        var clipMask = isClipMask(item);
+        if (clipMask) exportClipMask(item, output.file);
+        else exportPng(output.file);
 
         var itemName = "";
         try { itemName = item.name; } catch (e) {}
@@ -448,6 +494,7 @@
             group_path: groupPath(item),
             item_type: item.typename,
             item_name: itemName,
+            is_clip_mask: clipMask,
             file: output.relative
         });
     }
@@ -503,6 +550,7 @@
             }
             file.write("], \"item_type\": " + jsonString(objectEntry.item_type) +
                 ", \"item_name\": " + jsonString(objectEntry.item_name) +
+                ", \"is_clip_mask\": " + (objectEntry.is_clip_mask ? "true" : "false") +
                 ", \"file\": " + jsonString(objectEntry.file) + "}");
             file.write(p + 1 == objectEntries.length ? "\n" : ",\n");
         }

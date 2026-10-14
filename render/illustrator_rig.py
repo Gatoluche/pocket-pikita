@@ -50,39 +50,56 @@ class IllustratorRig:
         self._extend_face_mask_over_cheeks(self._face_mask)
         self._masked_faces: dict[int, pygame.Surface] = {}
         self._gaze_base: pygame.Surface | None = None
+        self._pupil_fill: pygame.Surface | None = None
         self._pupils: pygame.Surface | None = None
-        self._cached_gaze_offset: tuple[int, int] | None = None
+        self._pupil_clip: pygame.Surface | None = None
+        self._cached_gaze_key: tuple[int, tuple[int, int]] | None = None
         self._cached_gazed_face: pygame.Surface | None = None
         gaze_dir = rig_dir / "eyes"
-        gaze_base_path = gaze_dir / "base_without_pupils.png"
+        pupil_clip_path = gaze_dir / "pupil_clip.png"
+        pupil_fill_path = gaze_dir / "pupil_fill.png"
         pupils_path = gaze_dir / "pupils.png"
-        if gaze_base_path.is_file() != pupils_path.is_file():
-            raise FileNotFoundError(
-                "Eye tracking needs both assets/rig/eyes/base_without_pupils.png "
-                "and assets/rig/eyes/pupils.png"
-            )
-        if gaze_base_path.is_file():
-            self._gaze_base = pygame.image.load(str(gaze_base_path)).convert_alpha()
+        gaze_assets = (pupil_clip_path, pupil_fill_path, pupils_path)
+        if all(path.is_file() for path in gaze_assets):
+            self._pupil_clip = pygame.image.load(str(pupil_clip_path)).convert_alpha()
+            self._pupil_fill = pygame.image.load(str(pupil_fill_path)).convert_alpha()
             self._pupils = pygame.image.load(str(pupils_path)).convert_alpha()
             expected_size = (self._width, self._height)
             if (
-                self._gaze_base.get_size() != expected_size
+                self._pupil_clip.get_size() != expected_size
+                or self._pupil_fill.get_size() != expected_size
                 or self._pupils.get_size() != expected_size
             ):
                 raise ValueError(
-                    f"Eye tracking images must both use the {self._width}x{self._height} "
+                    f"Eye tracking images must all use the {self._width}x{self._height} "
                     "rig canvas"
                 )
-            self._gaze_base.blit(
+            self._pupil_fill.blit(
+                self._pupil_clip,
+                (0, 0),
+                special_flags=pygame.BLEND_RGBA_MULT,
+            )
+            self._pupil_fill.blit(
                 self._face_mask,
                 (0, 0),
                 special_flags=pygame.BLEND_RGBA_MULT,
             )
-            self._pupils.blit(
-                self._face_mask,
-                (0, 0),
-                special_flags=pygame.BLEND_RGBA_MULT,
-            )
+        else:
+            # Keep the existing Base-only tracker usable until the Illustrator
+            # export includes its filled clipping paths.
+            legacy_base_path = gaze_dir / "base_without_pupils.png"
+            if legacy_base_path.is_file() and pupils_path.is_file():
+                self._gaze_base = pygame.image.load(
+                    str(legacy_base_path)
+                ).convert_alpha()
+                self._pupils = pygame.image.load(str(pupils_path)).convert_alpha()
+                if (
+                    self._gaze_base.get_size() != (self._width, self._height)
+                    or self._pupils.get_size() != (self._width, self._height)
+                ):
+                    raise ValueError(
+                        "Legacy eye tracking images must use the rig canvas size"
+                    )
         self._parts = {
             layer_name: {
                 side: self._make_part(layer_name, side, pivot)
@@ -90,6 +107,10 @@ class IllustratorRig:
             }
             for layer_name, side_pivots in self._pivots.items()
         }
+
+    @property
+    def has_clipped_eye_tracking(self) -> bool:
+        return self._pupil_clip is not None
 
     @staticmethod
     def _make_face_mask(face_shape: pygame.Surface) -> pygame.Surface:
@@ -288,7 +309,7 @@ class IllustratorRig:
         gaze_x: float,
         gaze_y: float,
     ) -> pygame.Surface:
-        if self._gaze_base is None or self._pupils is None:
+        if self._pupils is None:
             return self._face_for(expression_surface)
         offset = (
             round(max(-1.0, min(1.0, gaze_x)) * 6.0),
@@ -296,14 +317,35 @@ class IllustratorRig:
         )
         if offset == (0, 0):
             return self._face_for(expression_surface)
-        if (
-            offset == self._cached_gaze_offset
-            and self._cached_gazed_face is not None
-        ):
+        cache_key = (id(expression_surface), offset)
+        if cache_key == self._cached_gaze_key and self._cached_gazed_face is not None:
             return self._cached_gazed_face
-        face = self._gaze_base.copy()
-        face.blit(self._pupils, offset)
-        self._cached_gaze_offset = offset
+        if self._pupil_clip is None or self._pupil_fill is None:
+            if self._gaze_base is None:
+                return self._face_for(expression_surface)
+            face = self._gaze_base.copy()
+        else:
+            face = expression_surface.copy()
+            face.blit(self._pupil_fill, (0, 0))
+        if self._pupil_clip is not None:
+            moved_pupils = pygame.Surface(
+                (self._width, self._height), pygame.SRCALPHA, 32
+            )
+            moved_pupils.blit(self._pupils, offset)
+            moved_pupils.blit(
+                self._face_mask,
+                (0, 0),
+                special_flags=pygame.BLEND_RGBA_MULT,
+            )
+            moved_pupils.blit(
+                self._pupil_clip,
+                (0, 0),
+                special_flags=pygame.BLEND_RGBA_MULT,
+            )
+            face.blit(moved_pupils, (0, 0))
+        else:
+            face.blit(self._pupils, offset)
+        self._cached_gaze_key = cache_key
         self._cached_gazed_face = face
         return face
 

@@ -11,7 +11,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 
 CANVAS_SIZE = (446, 910)
@@ -22,13 +22,18 @@ EYE_SOURCES = {
 
 
 def object_export(
-    manifest: dict, layer_path: list[str], item_name: str
+    manifest: dict,
+    layer_path: list[str],
+    item_name: str,
+    group_path: list[str] | None = None,
 ) -> dict:
+    if group_path is None:
+        group_path = ["Pupil"]
     matches = [
         entry
         for entry in manifest.get("object_exports", [])
         if entry.get("layer_path") == layer_path
-        and entry.get("group_path") == ["Pupil"]
+        and entry.get("group_path") == group_path
         and entry.get("item_name") == item_name
     ]
     if len(matches) != 1:
@@ -97,21 +102,35 @@ def build_assets(base_path: Path, sublayers_dir: Path, output_dir: Path) -> None
         raise ValueError(f"{base_path} is {base.size}, expected {expected_size}")
 
     pupils = Image.new("RGBA", expected_size, (0, 0, 0, 0))
+    eye_clip = Image.new("L", expected_size, 0)
     eye_colors: dict[str, tuple[int, int, int]] = {}
     pupil_images: dict[str, Image.Image] = {}
     for side, layer_path in EYE_SOURCES.items():
         pupil_entry = object_export(manifest, layer_path, "Pupil")
         glint_entry = object_export(manifest, layer_path, "Glint")
+        clip_entry = object_export(manifest, layer_path, "Mask")
         pupil_art = aligned_image(sublayers_dir / pupil_entry["file"], expected_size)
         glint_art = aligned_image(sublayers_dir / glint_entry["file"], expected_size)
+        if clip_entry.get("is_clip_mask") is not True:
+            raise ValueError(
+                f"The {side} eye Mask export is not marked as an Illustrator clipping path; "
+                "rerun tools/export_illustrator_sublayers.jsx"
+            )
+        clip_art = aligned_image(sublayers_dir / clip_entry["file"], expected_size)
         pupils.alpha_composite(pupil_art)
         pupils.alpha_composite(glint_art)
         pupil_images[side] = pupil_art
         eye_colors[side] = eye_fill_color(base, pupil_art, side)
+        side_clip = clip_art.getchannel("A")
+        eye_clip = ImageChops.lighter(eye_clip, side_clip)
 
-    base_without_pupils = base.copy()
-    base_pixels = base_without_pupils.load()
-    pupil_alpha = pupils.getchannel("A").load()
+    # Keep pupil art unmasked until runtime. Apply the fixed aperture after
+    # translating the pupils so the clip stays aligned to the eye.
+    clipped_source_alpha = ImageChops.multiply(pupils.getchannel("A"), eye_clip)
+
+    pupil_fill = Image.new("RGBA", expected_size, (0, 0, 0, 0))
+    fill_pixels = pupil_fill.load()
+    pupil_alpha = clipped_source_alpha.load()
     for side, pupil_art in pupil_images.items():
         bounds = pupil_art.getchannel("A").getbbox()
         assert bounds is not None
@@ -119,10 +138,15 @@ def build_assets(base_path: Path, sublayers_dir: Path, output_dir: Path) -> None
         for y in range(bounds[1], bounds[3]):
             for x in range(bounds[0], bounds[2]):
                 if pupil_alpha[x, y]:
-                    base_pixels[x, y] = fill
+                    # Fully erase antialiased source pixels, while retaining
+                    # the black outline by limiting the patch to the clip.
+                    fill_pixels[x, y] = (*eye_colors[side], 255)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    base_without_pupils.save(output_dir / "base_without_pupils.png", optimize=True)
+    clip_layer = Image.new("RGBA", expected_size, (255, 255, 255, 0))
+    clip_layer.putalpha(eye_clip)
+    clip_layer.save(output_dir / "pupil_clip.png", optimize=True)
+    pupil_fill.save(output_dir / "pupil_fill.png", optimize=True)
     pupils.save(output_dir / "pupils.png", optimize=True)
     metadata = {
         "canvas_size": list(expected_size),
@@ -130,6 +154,8 @@ def build_assets(base_path: Path, sublayers_dir: Path, output_dir: Path) -> None
         "pupil_source_layers": EYE_SOURCES,
         "eye_fill_colors": {side: list(color) for side, color in eye_colors.items()},
         "pupil_components": ["Pupil", "Glint"],
+        "pupil_clip_source": "filled Illustrator Pupil/Mask clipping paths",
+        "pupil_clip_expression": "Angry",
     }
     (output_dir / "manifest.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"

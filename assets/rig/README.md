@@ -47,10 +47,15 @@ are missing or incomplete, the renderer falls back to the static top-hair
 layer. The separated ear LED objects pulse briefly during idle scanning and
 cursor attention, shifting to a warm amber that follows each ear's movement.
 
-To build the eye-tracking images, run `python tools/build_eye_tracking_assets.py`
-after exporting the Illustrator sublayers. The script takes the separate pupil
-disk and shine objects from the Angy eye spare, combines them on the aligned
-canvas, and fills their original positions with the cyan sampled from the
-canonical `Base.png`. The renderer moves the disk and shine together while the
-top hair remains in front. Tracking is applied to the open Base expression;
-other expressions and the supplied blink sprites keep their own artwork.
+To build the eye-tracking images, first rerun
+`tools/export_illustrator_sublayers.jsx` in Illustrator, then run
+`python tools/build_eye_tracking_assets.py`. The exporter marks each Illustrator
+clipping path and writes it as an aligned white silhouette instead of its normal
+invisible state. The builder combines the separate pupil disk and shine from
+the Angy eye spare, samples the cyan fill from `Base.png`, and preserves the
+actual clipping aperture. At runtime, the translated pupil is clipped against
+that fixed aperture, so the black eye outline stays visible as the pupil moves.
+Because these source masks come from the Angry eye spare, clipped tracking is
+limited to Angry until matching masks are exported for other expressions. The
+existing Base tracker remains available while those fresh Illustrator exports
+are pending.

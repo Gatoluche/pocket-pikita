@@ -76,6 +76,11 @@ HTTRANSPARENT = -1
 CURSOR_NOTICE_DISTANCE = 520
 CURSOR_IDLE_SCAN_DWELL = 1.0
 CURSOR_LED_PULSE_DURATION = 0.4
+CURSOR_TRACKABLE_EXPRESSIONS = (
+    Expression.BASE,
+    Expression.ANGRY,
+    Expression.BLUSH,
+)
 SCREEN_EDGE_DISTANCE = 36
 JUMP_DURATION = 0.6
 DRAG_REST_ANGLE = 0.15
@@ -590,24 +595,25 @@ class OpenGLWindow(Renderer):
             walking=self._is_walking(),
             walk_strength=self._walk_strength(now),
             jumping=self._is_jumping(),
-            gaze_x=(
-                intent.gaze_x
-                if intent.expression is Expression.BASE
-                and not intent.blinking
-                and not intent.talking
-                else 0.0
-            ),
-            gaze_y=(
-                intent.gaze_y
-                if intent.expression is Expression.BASE
-                and not intent.blinking
-                and not intent.talking
-                else 0.0
-            ),
+            gaze_x=intent.gaze_x if self._can_track_eyes(intent) else 0.0,
+            gaze_y=intent.gaze_y if self._can_track_eyes(intent) else 0.0,
             ear_flick_left=intent.ear_flick_left,
             ear_flick_right=intent.ear_flick_right,
             ear_led_pulse=intent.ear_led_pulse,
         )
+
+    def _can_track_eyes(self, intent: PetIntent) -> bool:
+        rig = self._illustrator_rig
+        if (
+            rig is None
+            or not self._illustrator_rig_enabled
+            or intent.expression not in CURSOR_TRACKABLE_EXPRESSIONS
+            or intent.blinking
+        ):
+            return False
+        if rig.has_clipped_eye_tracking:
+            return intent.expression is Expression.ANGRY and not intent.talking
+        return intent.expression is Expression.BASE and not intent.talking
 
     def _upload_rig_texture(self, surface: pygame.Surface) -> int:
         texture_surface = pygame.transform.smoothscale(
@@ -1310,12 +1316,7 @@ class OpenGLWindow(Renderer):
         cursor_attention = 0.0
         monitors = self._monitor_rects()
         monitor = self._monitor_containing_point(eye_position, monitors)
-        if (
-            monitor is not None
-            and intent.expression is Expression.BASE
-            and not intent.blinking
-            and not intent.talking
-        ):
+        if monitor is not None and self._can_track_eyes(intent):
             cursor = _Point()
             if self._user.GetCursorPos(ctypes.byref(cursor)):
                 cursor_position = (cursor.x, cursor.y)
