@@ -172,6 +172,21 @@ WALK_CLIP = AnimationClip(
     loop=True,
 )
 
+IMPACT_CLIP = AnimationClip(
+    "impact",
+    0.32,
+    {
+        "scale_normal": (
+            Keyframe(0.0, 0.86), Keyframe(0.055, 1.05),
+            Keyframe(0.16, 0.97), Keyframe(0.32, 1.0),
+        ),
+        "scale_tangent": (
+            Keyframe(0.0, 1.08), Keyframe(0.055, 0.97),
+            Keyframe(0.16, 1.02), Keyframe(0.32, 1.0),
+        ),
+    },
+)
+
 EAR_FLICK_CLIP = AnimationClip(
     "ear flick",
     0.72,

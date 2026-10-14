@@ -19,7 +19,8 @@
 - A fast release carries smoothed cursor velocity into Pikita as a bounded,
   damped toss.
 - The visible sprite stays within its monitor, rebounds on impact, and plays a
-  speed-sensitive synthesized electronic bump.
+  speed-sensitive synthesized electronic bump. Impacts add a brief squash and
+  rebound along the collision axis.
 - Other desktop windows are not collision surfaces yet.
 
 ## Later: authored animation and attention

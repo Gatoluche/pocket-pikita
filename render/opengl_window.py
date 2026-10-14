@@ -50,7 +50,7 @@ from pygame.locals import DOUBLEBUF, OPENGL
 
 from input.events import FrameInput
 from desktop_icons import DesktopIcon, DesktopIcons
-from pet.animation import WALK_CLIP
+from pet.animation import IMPACT_CLIP, WALK_CLIP
 from pet.eye_tracking import EyeTarget, EyeTracker
 from pet.intent import Expression, PetIntent, Sound
 from render.illustrator_rig import IllustratorRig
@@ -402,6 +402,9 @@ class OpenGLWindow(Renderer):
         self._toss_velocity = (0.0, 0.0)
         self._toss_position: tuple[float, float] | None = None
         self._toss_active = False
+        self._impact_axis: str | None = None
+        self._impact_started = 0.0
+        self._impact_strength = 0.0
         self._recent_impact_sounds: list[tuple[pygame.mixer.Sound, pygame.mixer.Channel]] = []
         self._drag_angle = 0.0
         self._drag_target_angle = 0.0
@@ -827,6 +830,7 @@ class OpenGLWindow(Renderer):
 
     def _sprite_layout(self, intent: PetIntent) -> tuple[float, float, float, float]:
         """Place the sprite on a shared ground line for normal and alpha rendering."""
+        now = time.monotonic()
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
         monitor = self._monitor_for_sprite_top(window, self._monitor_rects())
@@ -838,6 +842,28 @@ class OpenGLWindow(Renderer):
         perspective = 1.0
         width_scale = (1.0 - 0.62 * intent.squish_x + 0.12 * intent.squish_y) * perspective
         height_scale = (1.0 - 0.62 * intent.squish_y + 0.12 * intent.squish_x) * perspective
+        if self._impact_axis is not None:
+            elapsed = now - self._impact_started
+            if elapsed < IMPACT_CLIP.duration:
+                impact = IMPACT_CLIP.sample(elapsed)
+                normal = 1.0 + (
+                    impact["scale_normal"] - 1.0
+                ) * self._impact_strength
+                tangent = 1.0 + (
+                    impact["scale_tangent"] - 1.0
+                ) * self._impact_strength
+                if self._impact_axis == "x":
+                    width_scale *= normal
+                    height_scale *= tangent
+                elif self._impact_axis == "y":
+                    width_scale *= tangent
+                    height_scale *= normal
+                else:
+                    width_scale *= normal
+                    height_scale *= normal
+            else:
+                self._impact_axis = None
+                self._impact_strength = 0.0
         if self._is_jumping():
             sway, bob, jump_width, jump_height = _jump_motion(self._jump_progress())
             width_scale *= jump_width
@@ -847,7 +873,6 @@ class OpenGLWindow(Renderer):
         elif self._is_inspecting():
             sway, bob = 8.0, -3.0
         else:
-            now = time.monotonic()
             sway, bob = _walk_offset(
                 self._is_walking(),
                 max(0.0, now - self._walk_started),
@@ -1620,6 +1645,18 @@ class OpenGLWindow(Renderer):
 
         impact_speed = math.hypot(impact_x, impact_y)
         if impact_speed > 35.0:
+            if impact_x > 0.0 and impact_y > 0.0:
+                self._impact_axis = "both"
+            else:
+                self._impact_axis = "x" if impact_x > 0.0 else "y"
+            self._impact_started = now
+            impact_fraction = max(
+                0.0,
+                min(1.0, (impact_speed - 35.0) / (TOSS_MAX_SPEED - 35.0)),
+            )
+            self._impact_strength = max(
+                0.0, min(1.0, math.sqrt(impact_fraction))
+            )
             self._play_impact_sound(impact_speed)
             self._attention_expression = Expression.UNIMPRESSED
             self._attention_until = now + 0.45
