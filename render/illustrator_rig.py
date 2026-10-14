@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pygame
 
-from pet.animation import IDLE_CLIP, WALK_CLIP
+from pet.animation import IDLE_CLIP, POKE_REACTION_CLIP, WALK_CLIP
 
 
 @dataclass(frozen=True)
@@ -424,6 +424,7 @@ class IllustratorRig:
         ear_flick_left: float = 0.0,
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
+        startle_progress: float | None = None,
         motion_velocity_x: float = 0.0,
         walk_seconds: float | None = None,
     ) -> pygame.Surface:
@@ -440,6 +441,7 @@ class IllustratorRig:
                 ear_flick_left=ear_flick_left,
                 ear_flick_right=ear_flick_right,
                 ear_led_pulse=ear_led_pulse,
+                startle_progress=startle_progress,
                 motion_velocity_x=motion_velocity_x,
                 walk_seconds=walk_seconds,
             )
@@ -450,6 +452,13 @@ class IllustratorRig:
         idle = 1.0 - strength
         idle_motion = IDLE_CLIP.sample(seconds)
         walk_motion = WALK_CLIP.sample(seconds if walk_seconds is None else walk_seconds)
+        startle = (
+            POKE_REACTION_CLIP.sample(
+                max(0.0, min(1.0, startle_progress)) * POKE_REACTION_CLIP.duration
+            )
+            if startle_progress is not None
+            else {}
+        )
 
         feet_left = walk_motion.get("feet_left", 0.0) * strength + idle_motion["feet_left"] * idle
         feet_right = walk_motion.get("feet_right", 0.0) * strength + idle_motion["feet_right"] * idle
@@ -462,8 +471,14 @@ class IllustratorRig:
         ear_scale = 1.0 + 0.4 * strength
         # A slight shared tilt lets the ears follow the direction of attention.
         gaze_turn = -2.0 * max(-1.0, min(1.0, gaze_x))
-        ear_left = idle_motion["ear_left"] * ear_scale + ear_flick_left + gaze_turn
-        ear_right = idle_motion["ear_right"] * ear_scale + ear_flick_right + gaze_turn
+        ear_left = (
+            idle_motion["ear_left"] * ear_scale + ear_flick_left + gaze_turn
+            + startle.get("ear_left", 0.0)
+        )
+        ear_right = (
+            idle_motion["ear_right"] * ear_scale + ear_flick_right + gaze_turn
+            + startle.get("ear_right", 0.0)
+        )
         if jumping:
             ear_left -= 3.0
             ear_right += 3.0
@@ -489,6 +504,8 @@ class IllustratorRig:
 
         arm_left = walk_motion.get("arm_left", 0.0) * strength + idle_motion["arm_left"] * idle
         arm_right = walk_motion.get("arm_right", 0.0) * strength + idle_motion["arm_right"] * idle
+        arm_left += startle.get("arm_left", 0.0)
+        arm_right += startle.get("arm_right", 0.0)
         if jumping:
             arm_left += 5.0
             arm_right -= 5.0
@@ -499,6 +516,10 @@ class IllustratorRig:
         for side in ("left", "right", "front"):
             part = self._top_hair_parts.get(side)
             if part is not None:
-                self._draw_rotated(canvas, part, idle_motion[f"hair_{side}"])
+                self._draw_rotated(
+                    canvas,
+                    part,
+                    idle_motion[f"hair_{side}"] + startle.get(f"hair_{side}", 0.0),
+                )
 
         return canvas

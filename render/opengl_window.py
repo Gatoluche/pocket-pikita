@@ -678,6 +678,7 @@ class OpenGLWindow(Renderer):
             ear_flick_left=intent.ear_flick_left,
             ear_flick_right=intent.ear_flick_right,
             ear_led_pulse=intent.ear_led_pulse,
+            startle_progress=intent.startle_progress,
             motion_velocity_x=motion_velocity_x,
             walk_seconds=max(0.0, now - self._walk_started),
         )

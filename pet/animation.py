@@ -121,6 +121,48 @@ IDLE_GLANCE_CLIP = AnimationClip(
     },
 )
 
+POKE_REACTION_CLIP = AnimationClip(
+    "poke recoil",
+    0.48,
+    {
+        "ear_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.06, -3.0, "ease_out"),
+            Keyframe(0.15, 1.2, "ease_out"), Keyframe(0.30, -0.45),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+        "ear_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.06, 3.0, "ease_out"),
+            Keyframe(0.15, -1.2, "ease_out"), Keyframe(0.30, 0.45),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+        "arm_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.08, 2.2, "ease_out"),
+            Keyframe(0.19, -0.8, "ease_out"), Keyframe(0.34, 0.2),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+        "arm_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.08, -2.2, "ease_out"),
+            Keyframe(0.19, 0.8, "ease_out"), Keyframe(0.34, -0.2),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+        "hair_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.07, 1.25, "ease_out"),
+            Keyframe(0.19, -0.55, "ease_out"), Keyframe(0.34, 0.15),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+        "hair_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.07, -1.25, "ease_out"),
+            Keyframe(0.19, 0.55, "ease_out"), Keyframe(0.34, -0.15),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+        "hair_front": (
+            Keyframe(0.0, 0.0), Keyframe(0.07, -0.8, "ease_out"),
+            Keyframe(0.19, 0.35, "ease_out"), Keyframe(0.34, -0.1),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
+    },
+)
+
 WALK_CLIP = AnimationClip(
     "walk",
     0.8,

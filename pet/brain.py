@@ -2,7 +2,7 @@
 
 import random
 
-from pet.animation import EAR_FLICK_CLIP, IDLE_GLANCE_CLIP
+from pet.animation import EAR_FLICK_CLIP, IDLE_GLANCE_CLIP, POKE_REACTION_CLIP
 from pet.intent import Expression, PetIntent, Sound
 
 BLINK_DURATION = 0.12         # how long the eyes stay shut, in seconds
@@ -29,6 +29,7 @@ class Brain:
         self._double_blink_pending = False
         self._double_blink_followup = False
         self._reacting = 0.0  # seconds of poke reaction left
+        self._reaction_elapsed = 0.0
         self._reaction_expression = Expression.HAPPY
         self._idle_expression = Expression.BASE
         self._idle_timer = random.uniform(MIN_IDLE_GAP, MAX_IDLE_GAP)
@@ -122,11 +123,16 @@ class Brain:
         if poked:
             # Start (or restart) the reaction and squeak this one frame only.
             self._reacting = REACTION_DURATION
+            self._reaction_elapsed = 0.0
             self._reaction_expression = random.choice(POKE_EXPRESSIONS)
             self._eyes_shut = False
             self._timer = 0.0
             self._interrupt_idle_motion()
-            return PetIntent(expression=self._reaction_expression, sound=Sound.SQUEAK)
+            return PetIntent(
+                expression=self._reaction_expression,
+                sound=Sound.SQUEAK,
+                startle_progress=0.0,
+            )
 
         squishing = squish_x > 0.0 or squish_y > 0.0
         if squishing:
@@ -140,7 +146,15 @@ class Brain:
 
         if self._reacting > 0.0:
             self._reacting -= dt
-            return PetIntent(expression=self._reaction_expression)
+            self._reaction_elapsed += dt
+            return PetIntent(
+                expression=self._reaction_expression,
+                startle_progress=(
+                    min(1.0, self._reaction_elapsed / POKE_REACTION_CLIP.duration)
+                    if self._reaction_elapsed < POKE_REACTION_CLIP.duration
+                    else None
+                ),
+            )
 
         if self._idle_remaining > 0.0:
             self._idle_remaining -= dt

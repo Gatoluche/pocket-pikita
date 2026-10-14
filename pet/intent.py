@@ -43,3 +43,7 @@ class PetIntent:
     ear_flick_left: float = 0.0
     ear_flick_right: float = 0.0
     ear_led_pulse: float = 0.0
+    # Normalized progress for a brief, authored response to a poke.
+    startle_progress: float | None = None
+    # Normalized progress for a brief, authored response to a poke.
+    startle_progress: float | None = None

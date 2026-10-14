@@ -23,10 +23,15 @@
   rebound along the collision axis.
 - Other desktop windows are not collision surfaces yet.
 
+## Implemented: tactile poke response
+
+- A click still gets a short expression and squeak response, with a quick
+  authored recoil through the separate ears, arms, and hair before he settles.
+
 ## Later: authored animation and attention
 
-- Build reusable clips from separate parts for glances, ear reactions,
-  fidgets, startled reactions, and transitions between expressions.
+- Expand the clip library with idle fidgets, richer startled reactions, and
+  transitions between expressions.
 - Add more attention sources after cursor tracking: sound-producing windows,
   Windows notifications, and sudden screen color changes.
 - Add sound design and personality-driven reactions that support ordinary

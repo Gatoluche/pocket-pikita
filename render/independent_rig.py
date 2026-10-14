@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pygame
 
-from pet.animation import IDLE_CLIP, WALK_CLIP
+from pet.animation import IDLE_CLIP, POKE_REACTION_CLIP, WALK_CLIP
 
 
 @dataclass(frozen=True)
@@ -233,6 +233,7 @@ class IndependentPartRig:
         ear_flick_left: float = 0.0,
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
+        startle_progress: float | None = None,
         motion_velocity_x: float = 0.0,
         walk_seconds: float | None = None,
     ) -> pygame.Surface:
@@ -244,6 +245,13 @@ class IndependentPartRig:
         self._frame_angles.clear()
         idle = IDLE_CLIP.sample(seconds)
         walk = WALK_CLIP.sample(seconds if walk_seconds is None else walk_seconds)
+        startle = (
+            POKE_REACTION_CLIP.sample(
+                max(0.0, min(1.0, startle_progress)) * POKE_REACTION_CLIP.duration
+            )
+            if startle_progress is not None
+            else {}
+        )
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
         ear_angles: dict[str, float] = {}
         for side, flick in (
@@ -257,6 +265,7 @@ class IndependentPartRig:
                 f"ear_{side}", ear, motion_velocity_x, dt
             )
             angle += flick - 2.0 * max(-1.0, min(1.0, gaze_x))
+            angle += startle.get(f"ear_{side}", 0.0)
             if jumping:
                 angle += -3.0 if side == "left" else 3.0
             ear_angles[side] = angle
@@ -303,6 +312,7 @@ class IndependentPartRig:
                 value = idle[f"arm_{side}"] + self._spring_angle(
                     f"arm_{side}", part, motion_velocity_x, dt
                 )
+                value += startle.get(f"arm_{side}", 0.0)
                 if jumping:
                     value += 5.0 if side == "left" else -5.0
             elif role == "foot":
@@ -313,6 +323,8 @@ class IndependentPartRig:
                 value = self._spring_angle(name, part, motion_velocity_x, dt)
                 if name.startswith("top_hair_"):
                     value += idle.get(f"hair_{side}", 0.0)
+                if name.startswith(("top_hair_", "bottom_hair_")):
+                    value += startle.get(f"hair_{side}", 0.0)
             elif role == "ear_led":
                 value = ear_angles.get(side or "", 0.0)
             else:
