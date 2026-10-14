@@ -114,6 +114,10 @@ IDLE_GLANCE_CLIP = AnimationClip(
             Keyframe(0.0, 0.0), Keyframe(0.16, 0.16, "ease_out"),
             Keyframe(0.78, 0.16), Keyframe(1.2, 0.0, "ease_in"),
         ),
+        "ear_led_pulse": (
+            Keyframe(0.0, 0.0), Keyframe(0.16, 1.0, "ease_out"),
+            Keyframe(0.78, 1.0), Keyframe(1.2, 0.0, "ease_in"),
+        ),
     },
 )
 

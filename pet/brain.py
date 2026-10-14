@@ -93,6 +93,7 @@ class Brain:
         return {
             "gaze_x": glance["gaze_x"] * direction_x,
             "gaze_y": glance["gaze_y"] * direction_y,
+            "ear_led_pulse": glance["ear_led_pulse"],
         }
 
     def update(

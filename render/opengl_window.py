@@ -602,6 +602,7 @@ class OpenGLWindow(Renderer):
             ),
             ear_flick_left=intent.ear_flick_left,
             ear_flick_right=intent.ear_flick_right,
+            ear_led_pulse=intent.ear_led_pulse,
         )
 
     def _upload_rig_texture(self, surface: pygame.Surface) -> int:

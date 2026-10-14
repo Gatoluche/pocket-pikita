@@ -44,4 +44,5 @@ to sway the left, right, and front hair pieces independently. It removes the
 static copies from the full top-hair export before drawing the moving pieces,
 so the strands do not leave duplicate edges behind. If those object exports
 are missing or incomplete, the renderer falls back to the static top-hair
-layer.
+layer. The separated ear LED objects also pulse briefly during idle scanning
+glances, shifting to a warm amber that follows each ear's movement.

@@ -42,3 +42,4 @@ class PetIntent:
     gaze_y: float = 0.0
     ear_flick_left: float = 0.0
     ear_flick_right: float = 0.0
+    ear_led_pulse: float = 0.0
