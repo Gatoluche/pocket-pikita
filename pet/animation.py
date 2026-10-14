@@ -86,12 +86,23 @@ IDLE_CLIP = AnimationClip(
             Keyframe(0.0, 0.32), Keyframe(2.0, -0.32), Keyframe(4.0, 0.32),
             Keyframe(6.0, -0.32), Keyframe(8.0, 0.32),
         ),
-        "breathing": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, 1.35), Keyframe(4.0, 0.0),
-            Keyframe(6.0, -1.35), Keyframe(8.0, 0.0),
-        ),
     },
     loop=True,
+)
+
+IDLE_GLANCE_CLIP = AnimationClip(
+    "idle glance",
+    1.2,
+    {
+        "gaze_x": (
+            Keyframe(0.0, 0.0), Keyframe(0.16, 0.42, "ease_out"),
+            Keyframe(0.78, 0.42), Keyframe(1.2, 0.0, "ease_in"),
+        ),
+        "gaze_y": (
+            Keyframe(0.0, 0.0), Keyframe(0.16, 0.16, "ease_out"),
+            Keyframe(0.78, 0.16), Keyframe(1.2, 0.0, "ease_in"),
+        ),
+    },
 )
 
 WALK_CLIP = AnimationClip(

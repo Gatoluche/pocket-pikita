@@ -22,7 +22,7 @@ class EyeTarget:
 
 
 class EyeTracker:
-    """Select the strongest interest and ease gaze toward it or back to center."""
+    """Follow the strongest target, using authored idle gaze when none is present."""
 
     def __init__(self, pursuit_rate: float = 12.0, return_rate: float = 7.0):
         self._pursuit_rate = max(0.0, pursuit_rate)
@@ -43,11 +43,13 @@ class EyeTracker:
         targets: Iterable[EyeTarget],
         dt: float,
         focus_range: tuple[float, float] = (520.0, 360.0),
+        idle_gaze: tuple[float, float] = (0.0, 0.0),
     ) -> tuple[float, float]:
-        """Return normalized gaze after smoothing toward the most interesting point.
+        """Return normalized gaze smoothed toward a target or idle glance.
 
         ``focus_range`` is the screen-space distance from the eyes to full gaze
-        deflection. The target may come from any future interest sensor.
+        deflection. ``idle_gaze`` is an authored glance used only when no target
+        is eligible; with neither, the eyes ease back to center.
         """
         eligible = [
             target
@@ -66,8 +68,11 @@ class EyeTracker:
             )
             rate = self._pursuit_rate
         else:
-            desired = (0.0, 0.0)
-            rate = self._return_rate
+            desired = tuple(
+                self._clamp(value) if math.isfinite(value) else 0.0
+                for value in idle_gaze
+            )
+            rate = self._pursuit_rate if desired != (0.0, 0.0) else self._return_rate
 
         elapsed = max(0.0, min(0.25, dt))
         blend = 1.0 - math.exp(-rate * elapsed)

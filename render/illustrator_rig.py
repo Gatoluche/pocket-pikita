@@ -240,11 +240,4 @@ class IllustratorRig:
 
         canvas.blit(self._layers["Top Hair"], (0, 0))
 
-        breathing = idle_motion["breathing"] * idle
-        if abs(breathing) > 0.05:
-            frame = pygame.Surface(
-                (self._width, self._height), pygame.SRCALPHA, 32
-            )
-            frame.blit(canvas, (0, round(breathing)))
-            return frame
         return canvas

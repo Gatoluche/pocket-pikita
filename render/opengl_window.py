@@ -1330,6 +1330,7 @@ class OpenGLWindow(Renderer):
                 if monitor is not None
                 else 360.0,
             ),
+            idle_gaze=(intent.gaze_x, intent.gaze_y),
         )
         return replace(intent, gaze_x=gaze_x, gaze_y=gaze_y)
 

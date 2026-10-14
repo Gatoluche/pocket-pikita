@@ -2,7 +2,7 @@
 
 import random
 
-from pet.animation import EAR_FLICK_CLIP
+from pet.animation import EAR_FLICK_CLIP, IDLE_GLANCE_CLIP
 from pet.intent import Expression, PetIntent, Sound
 
 BLINK_DURATION = 0.12         # how long the eyes stay shut, in seconds
@@ -10,8 +10,13 @@ MIN_GAP, MAX_GAP = 2.0, 5.0   # range between blinks, in seconds
 REACTION_DURATION = 0.6       # how long a poke reaction lasts, in seconds
 MIN_IDLE_GAP, MAX_IDLE_GAP = 7.0, 14.0
 MIN_EAR_FLICK_GAP, MAX_EAR_FLICK_GAP = 4.5, 8.0
+MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP = 4.0, 7.0
 IDLE_EXPRESSIONS = (Expression.SMUG, Expression.WINK, Expression.UNIMPRESSED)
 POKE_EXPRESSIONS = (Expression.HAPPY, Expression.WINK, Expression.BLUSH)
+GLANCE_DIRECTIONS = (
+    (-1.0, 0.0), (1.0, 0.0), (-1.0, -0.65), (1.0, -0.65),
+    (-1.0, 0.65), (1.0, 0.65),
+)
 
 
 class Brain:
@@ -27,10 +32,19 @@ class Brain:
         self._ear_flick_cooldown = random.uniform(MIN_EAR_FLICK_GAP, MAX_EAR_FLICK_GAP)
         self._ear_flick_elapsed: float | None = None
         self._ear_flick_side = "left"
+        self._idle_glance_cooldown = random.uniform(
+            MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP
+        )
+        self._idle_glance_elapsed: float | None = None
+        self._idle_glance_direction = (1.0, 0.0)
 
     def _interrupt_idle_motion(self) -> None:
         self._ear_flick_elapsed = None
         self._ear_flick_cooldown = random.uniform(MIN_EAR_FLICK_GAP, MAX_EAR_FLICK_GAP)
+        self._idle_glance_elapsed = None
+        self._idle_glance_cooldown = random.uniform(
+            MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP
+        )
 
     def _idle_motion(self, dt: float) -> dict[str, float]:
         if self._ear_flick_elapsed is None:
@@ -54,6 +68,31 @@ class Brain:
         return {
             "ear_flick_left": flick if self._ear_flick_side == "left" else 0.0,
             "ear_flick_right": flick if self._ear_flick_side == "right" else 0.0,
+        }
+
+    def _idle_glance(self, dt: float) -> dict[str, float]:
+        if self._idle_glance_elapsed is None:
+            self._idle_glance_cooldown -= dt
+            if self._idle_glance_cooldown <= 0.0:
+                self._idle_glance_elapsed = 0.0
+                self._idle_glance_direction = random.choice(GLANCE_DIRECTIONS)
+
+        if self._idle_glance_elapsed is None:
+            return {"gaze_x": 0.0, "gaze_y": 0.0}
+
+        self._idle_glance_elapsed += dt
+        if self._idle_glance_elapsed >= IDLE_GLANCE_CLIP.duration:
+            self._idle_glance_elapsed = None
+            self._idle_glance_cooldown = random.uniform(
+                MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP
+            )
+            return {"gaze_x": 0.0, "gaze_y": 0.0}
+
+        glance = IDLE_GLANCE_CLIP.sample(self._idle_glance_elapsed)
+        direction_x, direction_y = self._idle_glance_direction
+        return {
+            "gaze_x": glance["gaze_x"] * direction_x,
+            "gaze_y": glance["gaze_y"] * direction_y,
         }
 
     def update(
@@ -111,6 +150,7 @@ class Brain:
             self._timer = 0.0
 
         idle_motion = self._idle_motion(dt)
+        idle_motion.update(self._idle_glance(dt))
         return PetIntent(
             expression=Expression.BASE,
             blinking=self._eyes_shut,
