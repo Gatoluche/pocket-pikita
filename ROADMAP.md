@@ -11,8 +11,8 @@
   steps and only a restrained counter-motion in his folded arms.
 - Export complete pupil disks and shines, then clip each moving eye to its
   fixed eye aperture inside the application.
-- Keep the ear roots covered while they move and use a soft bloom pass for LED
-  flashes.
+- Keep the ear roots covered while they move; derive a soft LED bloom from the
+  emitter pixels and composite it over the ear fill.
 
 ## Implemented: drag toss and screen-edge impact
 

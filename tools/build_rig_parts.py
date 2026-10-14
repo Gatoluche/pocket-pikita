@@ -209,7 +209,7 @@ class PartBuilder:
             )
             self.save_part(
                 f"ear_led_{side}", led, pivot, role="ear_led", side=side,
-                max_angle=3.5, z=36,
+                max_angle=3.5, z=37,
             )
 
             # Keep a small fixed patch at the hinge above the moving shape.
@@ -222,16 +222,22 @@ class PartBuilder:
             patch = Image.new("RGBA", SIZE, (0, 0, 0, 0))
             patch.paste(ear, (0, 0), patch_mask)
             self.save_part(
-                f"ear_anchor_{side}", patch, role="ear_anchor", side=side, z=37,
+                f"ear_anchor_{side}", patch, role="ear_anchor", side=side, z=38,
             )
 
-            glow = Image.new("RGBA", SIZE, (255, 239, 142, 0))
-            alpha = led.getchannel("A").filter(ImageFilter.GaussianBlur(8.0))
-            alpha = alpha.point(lambda value: round(value * 0.82))
+            led_alpha = led.getchannel("A")
+            wide_halo = led_alpha.filter(ImageFilter.GaussianBlur(14.0)).point(
+                lambda value: round(value * 0.44)
+            )
+            near_halo = led_alpha.filter(ImageFilter.GaussianBlur(6.0)).point(
+                lambda value: round(value * 0.52)
+            )
+            alpha = ImageChops.add(wide_halo, near_halo)
+            glow = Image.new("RGBA", SIZE, (255, 248, 166, 0))
             glow.putalpha(alpha)
             self.save_part(
                 f"ear_glow_{side}", glow, pivot, role="ear_glow", side=side,
-                max_angle=3.5, z=34,
+                max_angle=3.5, z=36,
             )
 
     @staticmethod
@@ -310,8 +316,8 @@ class PartBuilder:
             "body",
             "bottom_hair_static",
             *bottom_hair,
-            "ear_glow_left", "ear_glow_right",
             "ear_left", "ear_right",
+            "ear_glow_left", "ear_glow_right",
             "ear_led_left", "ear_led_right",
             "ear_anchor_left", "ear_anchor_right",
             "faces", "frame",

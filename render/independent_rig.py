@@ -245,6 +245,22 @@ class IndependentPartRig:
         idle = IDLE_CLIP.sample(seconds)
         walk = WALK_CLIP.sample(seconds if walk_seconds is None else walk_seconds)
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
+        ear_angles: dict[str, float] = {}
+        for side, flick in (
+            ("left", ear_flick_left),
+            ("right", ear_flick_right),
+        ):
+            ear = self.parts.get(f"ear_{side}")
+            if ear is None:
+                continue
+            angle = idle[f"ear_{side}"] + self._spring_angle(
+                f"ear_{side}", ear, motion_velocity_x, dt
+            )
+            angle += flick - 2.0 * max(-1.0, min(1.0, gaze_x))
+            if jumping:
+                angle += -3.0 if side == "left" else 3.0
+            ear_angles[side] = angle
+
         canvas = pygame.Surface((self.width, self.height), pygame.SRCALPHA, 32)
         face = self._face_with_gaze(expression_surface, gaze_x, gaze_y)
         if gaze_x == 0.0 and gaze_y == 0.0:
@@ -261,9 +277,7 @@ class IndependentPartRig:
                     part.image,
                     part.pivot,
                     part.origin,
-                    self._spring_angle(
-                        f"ear_{part.side}", part, motion_velocity_x, dt
-                    ),
+                    ear_angles.get(part.side or "", 0.0),
                 )
                 glow = image.copy()
                 glow.set_alpha(round(210 * intensity))
@@ -279,13 +293,7 @@ class IndependentPartRig:
                 value = walk.get(f"feet_{side}", 0.0) * strength
                 self._spring_angle(name, part, 0.0, dt)
             elif role == "ear":
-                value = idle[f"ear_{side}"] + self._spring_angle(
-                    f"ear_{side}", part, motion_velocity_x, dt
-                )
-                value += ear_flick_left if side == "left" else ear_flick_right
-                value -= 2.0 * max(-1.0, min(1.0, gaze_x))
-                if jumping:
-                    value += -3.0 if side == "left" else 3.0
+                value = ear_angles.get(side or "", 0.0)
             elif role in ("arm", "upper_arm"):
                 value = idle[f"arm_{side}"] + self._spring_angle(
                     f"arm_{side}", part, motion_velocity_x, dt
@@ -300,8 +308,8 @@ class IndependentPartRig:
                 value = self._spring_angle(name, part, motion_velocity_x, dt)
                 if name.startswith("top_hair_"):
                     value += idle.get(f"hair_{side}", 0.0)
-            elif role in ("ear_led", "ear_glow"):
-                value = self._spring_angle(f"ear_{side}", part, motion_velocity_x, dt)
+            elif role == "ear_led":
+                value = ear_angles.get(side or "", 0.0)
             else:
                 value = 0.0
 
