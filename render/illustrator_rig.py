@@ -497,17 +497,32 @@ class IllustratorRig:
             + idle_motion["feet_right"] * idle
             + fidget.get("feet_right", 0.0)
         )
+        walk_direction = -1.0 if motion_velocity_x < 0.0 else 1.0
+        walk_stride_left = (
+            walk_motion.get("foot_stride_left", 0.0) * walk_direction * strength
+        )
+        walk_stride_right = (
+            walk_motion.get("foot_stride_right", 0.0) * walk_direction * strength
+        )
         self._draw_rotated(
             canvas,
             self._parts["Feet"]["left"],
             feet_left,
-            (0.0, -fidget.get("foot_lift_left", 0.0)),
+            (
+                walk_stride_left,
+                -walk_motion.get("foot_lift_left", 0.0) * strength
+                - fidget.get("foot_lift_left", 0.0),
+            ),
         )
         self._draw_rotated(
             canvas,
             self._parts["Feet"]["right"],
             feet_right,
-            (0.0, -fidget.get("foot_lift_right", 0.0)),
+            (
+                walk_stride_right,
+                -walk_motion.get("foot_lift_right", 0.0) * strength
+                - fidget.get("foot_lift_right", 0.0),
+            ),
         )
 
         canvas.blit(self._layers["Body"], (0, 0))

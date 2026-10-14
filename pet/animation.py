@@ -189,47 +189,36 @@ WALK_CLIP = AnimationClip(
     0.8,
     {
         "feet_left": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, 2.2), Keyframe(0.4, 0.0),
-            Keyframe(0.6, -2.2), Keyframe(0.8, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, -1.3, "ease_out"),
+            Keyframe(0.4, 0.0, "ease_in"), Keyframe(0.6, 1.0, "ease_out"),
+            Keyframe(0.8, 0.0, "ease_in"),
         ),
         "feet_right": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, -2.2), Keyframe(0.4, 0.0),
-            Keyframe(0.6, 2.2), Keyframe(0.8, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, 1.0, "ease_out"),
+            Keyframe(0.4, 0.0, "ease_in"), Keyframe(0.6, -1.3, "ease_out"),
+            Keyframe(0.8, 0.0, "ease_in"),
         ),
-        # Pikita has floating feet rather than articulated lower legs. Each
-        # foot swings forward while lifted, then drifts slightly back as the
-        # opposite foot takes its turn.
+        # Feet are fully detached from the body; the torso and folded arms stay
+        # settled while one foot swings forward and lifts, then trades places.
         "foot_stride_left": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, 6.0), Keyframe(0.4, 0.0),
-            Keyframe(0.6, -4.0), Keyframe(0.8, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.12, 3.0, "ease_out"),
+            Keyframe(0.24, 11.0), Keyframe(0.4, 0.0, "ease_in"),
+            Keyframe(0.56, -5.0), Keyframe(0.8, 0.0, "ease_in"),
         ),
         "foot_stride_right": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, -4.0), Keyframe(0.4, 0.0),
-            Keyframe(0.6, 6.0), Keyframe(0.8, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.2, -5.0),
+            Keyframe(0.4, 0.0, "ease_in"), Keyframe(0.52, 3.0, "ease_out"),
+            Keyframe(0.64, 11.0), Keyframe(0.8, 0.0, "ease_in"),
         ),
         "foot_lift_left": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, 7.0), Keyframe(0.4, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.12, 2.0, "ease_out"),
+            Keyframe(0.24, 9.0), Keyframe(0.4, 0.0, "ease_in"),
             Keyframe(0.8, 0.0),
         ),
         "foot_lift_right": (
-            Keyframe(0.0, 0.0), Keyframe(0.4, 0.0), Keyframe(0.6, 7.0),
-            Keyframe(0.8, 0.0),
-        ),
-        "arm_left": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, -0.9), Keyframe(0.4, 0.0),
-            Keyframe(0.6, 0.9), Keyframe(0.8, 0.0),
-        ),
-        "arm_right": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, 0.9), Keyframe(0.4, 0.0),
-            Keyframe(0.6, -0.9), Keyframe(0.8, 0.0),
-        ),
-        "body_sway": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, 1.6), Keyframe(0.4, 0.0),
-            Keyframe(0.6, -1.6), Keyframe(0.8, 0.0),
-        ),
-        "body_bob": (
-            Keyframe(0.0, 0.0), Keyframe(0.2, -2.8), Keyframe(0.4, 0.0),
-            Keyframe(0.6, -2.8), Keyframe(0.8, 0.0),
+            Keyframe(0.0, 0.0), Keyframe(0.4, 0.0),
+            Keyframe(0.52, 2.0, "ease_out"), Keyframe(0.64, 9.0),
+            Keyframe(0.8, 0.0, "ease_in"),
         ),
     },
     loop=True,

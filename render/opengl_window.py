@@ -130,11 +130,11 @@ def _squish_from_drag(
 
 
 def _walk_offset(walking: bool, seconds: float, strength: float = 1.0) -> tuple[float, float]:
-    """Use the same restrained, walk-relative bounce as the limb animation."""
+    """Apply optional torso accents; floating-foot walks leave Pikita still."""
     if not walking:
         return 0.0, 0.0
     gait = WALK_CLIP.sample(seconds)
-    return gait["body_sway"] * strength, gait["body_bob"] * strength
+    return gait.get("body_sway", 0.0) * strength, gait.get("body_bob", 0.0) * strength
 
 
 def _walk_speed_scale(seconds: float) -> float:

@@ -5,10 +5,7 @@
 - Export each movable body part as an aligned transparent PNG with a named
   pivot: hair pieces, ears and LEDs, shoulder panels, arms, and feet.
 - Keep the Illustrator export reproducible and preserve the source document.
-- Apply damped inertia to parts while Pikita is dragged or moves around. Let
-  authored walk clips control his arms and feet during a walk.
-- Keep the walking cycle phase tied to each walk, with small alternating foot
-  steps and only a restrained counter-motion in his folded arms.
+- Apply damped inertia to parts while Pikita is dragged or moves around.
 - Export complete pupil disks and shines, then clip each moving eye to its
   fixed eye aperture inside the application.
 - Keep the ear roots covered while they move; derive a soft LED bloom from the
@@ -34,6 +31,11 @@
 - Pikita rests without a constant body-part sway. Every so often, one floating
   foot lifts and settles with a small counter-movement in his folded arms and
   hair; the fidget side alternates.
+
+## Implemented: floating-foot walk
+
+- One detached foot swings forward and lifts while the other trails and settles;
+  the folded torso and arms stay still so the alternating steps read clearly.
 
 ## Later: authored animation and attention
 
