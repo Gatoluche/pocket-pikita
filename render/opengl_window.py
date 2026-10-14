@@ -74,6 +74,7 @@ WM_NCHITTEST = 0x0084
 HTCLIENT = 1
 HTTRANSPARENT = -1
 CURSOR_NOTICE_DISTANCE = 520
+CURSOR_IDLE_SCAN_DWELL = 1.0
 SCREEN_EDGE_DISTANCE = 36
 JUMP_DURATION = 0.6
 DRAG_REST_ANGLE = 0.15
@@ -346,6 +347,8 @@ class OpenGLWindow(Renderer):
         self._last_sprite_surface: pygame.Surface | None = None
         self._eye_tracker = EyeTracker()
         self._eye_tracking_time = time.monotonic()
+        self._last_cursor_position: tuple[int, int] | None = None
+        self._cursor_last_moved = self._eye_tracking_time
         for png in pngs:
             surface = _clean_transparent_edge(
                 pygame.image.load(str(png)).convert_alpha()
@@ -1313,11 +1316,24 @@ class OpenGLWindow(Renderer):
         ):
             cursor = _Point()
             if self._user.GetCursorPos(ctypes.byref(cursor)):
+                cursor_position = (cursor.x, cursor.y)
+                if (
+                    self._last_cursor_position is None
+                    or math.hypot(
+                        cursor.x - self._last_cursor_position[0],
+                        cursor.y - self._last_cursor_position[1],
+                    ) > 2.0
+                ):
+                    self._cursor_last_moved = now
+                self._last_cursor_position = cursor_position
                 cursor_monitor = self._monitor_containing_point(
-                    (cursor.x, cursor.y), monitors
+                    cursor_position, monitors
                 )
                 if cursor_monitor is monitor:
-                    targets.append(EyeTarget((cursor.x, cursor.y), source="cursor"))
+                    idle_scan = bool(intent.gaze_x or intent.gaze_y)
+                    cursor_parked = now - self._cursor_last_moved >= CURSOR_IDLE_SCAN_DWELL
+                    if not (idle_scan and cursor_parked):
+                        targets.append(EyeTarget(cursor_position, source="cursor"))
 
         gaze_x, gaze_y = self._eye_tracker.update(
             eye_position,
