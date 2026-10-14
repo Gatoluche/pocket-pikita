@@ -44,8 +44,8 @@ to sway the left, right, and front hair pieces independently. It removes the
 static copies from the full top-hair export before drawing the moving pieces,
 so the strands do not leave duplicate edges behind. If those object exports
 are missing or incomplete, the renderer falls back to the static top-hair
-layer. The separated ear LED objects also pulse briefly during idle scanning
-glances, shifting to a warm amber that follows each ear's movement.
+layer. The separated ear LED objects pulse briefly during idle scanning and
+cursor attention, shifting to a warm amber that follows each ear's movement.
 
 To build the eye-tracking images, run `python tools/build_eye_tracking_assets.py`
 after exporting the Illustrator sublayers. The script takes the separate pupil

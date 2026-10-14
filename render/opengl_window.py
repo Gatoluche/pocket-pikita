@@ -75,6 +75,7 @@ HTCLIENT = 1
 HTTRANSPARENT = -1
 CURSOR_NOTICE_DISTANCE = 520
 CURSOR_IDLE_SCAN_DWELL = 1.0
+CURSOR_LED_PULSE_DURATION = 0.4
 SCREEN_EDGE_DISTANCE = 36
 JUMP_DURATION = 0.6
 DRAG_REST_ANGLE = 0.15
@@ -1306,6 +1307,7 @@ class OpenGLWindow(Renderer):
         )
 
         targets: list[EyeTarget] = []
+        cursor_attention = 0.0
         monitors = self._monitor_rects()
         monitor = self._monitor_containing_point(eye_position, monitors)
         if (
@@ -1330,6 +1332,12 @@ class OpenGLWindow(Renderer):
                     cursor_position, monitors
                 )
                 if cursor_monitor is monitor:
+                    cursor_attention = max(
+                        0.0,
+                        1.0
+                        - (now - self._cursor_last_moved)
+                        / CURSOR_LED_PULSE_DURATION,
+                    )
                     idle_scan = bool(intent.gaze_x or intent.gaze_y)
                     cursor_parked = now - self._cursor_last_moved >= CURSOR_IDLE_SCAN_DWELL
                     if not (idle_scan and cursor_parked):
@@ -1349,7 +1357,12 @@ class OpenGLWindow(Renderer):
             ),
             idle_gaze=(intent.gaze_x, intent.gaze_y),
         )
-        return replace(intent, gaze_x=gaze_x, gaze_y=gaze_y)
+        return replace(
+            intent,
+            gaze_x=gaze_x,
+            gaze_y=gaze_y,
+            ear_led_pulse=max(intent.ear_led_pulse, cursor_attention),
+        )
 
     def _try_begin_screen_jump(
         self, window: _Rect, monitor: _Rect, monitors: list[_Rect]
