@@ -107,12 +107,12 @@ IDLE_GLANCE_CLIP = AnimationClip(
     1.2,
     {
         "gaze_x": (
-            Keyframe(0.0, 0.0), Keyframe(0.16, 0.42, "ease_out"),
-            Keyframe(0.78, 0.42), Keyframe(1.2, 0.0, "ease_in"),
+            Keyframe(0.0, 0.0), Keyframe(0.16, 0.78, "ease_out"),
+            Keyframe(0.78, 0.78), Keyframe(1.2, 0.0, "ease_in"),
         ),
         "gaze_y": (
-            Keyframe(0.0, 0.0), Keyframe(0.16, 0.16, "ease_out"),
-            Keyframe(0.78, 0.16), Keyframe(1.2, 0.0, "ease_in"),
+            Keyframe(0.0, 0.0), Keyframe(0.16, 0.65, "ease_out"),
+            Keyframe(0.78, 0.65), Keyframe(1.2, 0.0, "ease_in"),
         ),
         "ear_led_pulse": (
             Keyframe(0.0, 0.0), Keyframe(0.16, 1.0, "ease_out"),

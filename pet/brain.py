@@ -14,8 +14,8 @@ MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP = 4.0, 7.0
 IDLE_EXPRESSIONS = (Expression.SMUG, Expression.WINK, Expression.UNIMPRESSED)
 POKE_EXPRESSIONS = (Expression.HAPPY, Expression.WINK, Expression.BLUSH)
 GLANCE_DIRECTIONS = (
-    (-1.0, 0.0), (1.0, 0.0), (-1.0, -0.65), (1.0, -0.65),
-    (-1.0, 0.65), (1.0, 0.65),
+    (-1.0, 0.0), (1.0, 0.0), (-1.0, -1.0), (1.0, -1.0),
+    (-1.0, 1.0), (1.0, 1.0),
 )
 
 
