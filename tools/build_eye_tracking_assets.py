@@ -103,12 +103,23 @@ def build_assets(base_path: Path, sublayers_dir: Path, output_dir: Path) -> None
 
     pupils = Image.new("RGBA", expected_size, (0, 0, 0, 0))
     eye_clip = Image.new("L", expected_size, 0)
+    eye_clips: dict[str, Image.Image] = {}
     eye_colors: dict[str, tuple[int, int, int]] = {}
     pupil_images: dict[str, Image.Image] = {}
     for side, layer_path in EYE_SOURCES.items():
         pupil_entry = object_export(manifest, layer_path, "Pupil")
         glint_entry = object_export(manifest, layer_path, "Glint")
         clip_entry = object_export(manifest, layer_path, "Mask")
+        if pupil_entry.get("is_unmasked_pupil") is not True:
+            raise ValueError(
+                f"The {side} pupil was not exported without Illustrator's mask; "
+                "rerun tools/export_illustrator_sublayers.jsx"
+            )
+        if glint_entry.get("is_unmasked_pupil") is not True:
+            raise ValueError(
+                f"The {side} glint was not exported without Illustrator's mask; "
+                "rerun tools/export_illustrator_sublayers.jsx"
+            )
         pupil_art = aligned_image(sublayers_dir / pupil_entry["file"], expected_size)
         glint_art = aligned_image(sublayers_dir / glint_entry["file"], expected_size)
         if clip_entry.get("is_clip_mask") is not True:
@@ -117,35 +128,43 @@ def build_assets(base_path: Path, sublayers_dir: Path, output_dir: Path) -> None
                 "rerun tools/export_illustrator_sublayers.jsx"
             )
         clip_art = aligned_image(sublayers_dir / clip_entry["file"], expected_size)
-        pupils.alpha_composite(pupil_art)
-        pupils.alpha_composite(glint_art)
-        pupil_images[side] = pupil_art
+        side_pupils = Image.new("RGBA", expected_size, (0, 0, 0, 0))
+        side_pupils.alpha_composite(pupil_art)
+        side_pupils.alpha_composite(glint_art)
+        pupils.alpha_composite(side_pupils)
+        pupil_images[side] = side_pupils
         eye_colors[side] = eye_fill_color(base, pupil_art, side)
         side_clip = clip_art.getchannel("A")
+        eye_clips[side] = side_clip
         eye_clip = ImageChops.lighter(eye_clip, side_clip)
 
     # Keep pupil art unmasked until runtime. Apply the fixed aperture after
     # translating the pupils so the clip stays aligned to the eye.
-    clipped_source_alpha = ImageChops.multiply(pupils.getchannel("A"), eye_clip)
-
     pupil_fill = Image.new("RGBA", expected_size, (0, 0, 0, 0))
     fill_pixels = pupil_fill.load()
-    pupil_alpha = clipped_source_alpha.load()
     for side, pupil_art in pupil_images.items():
+        clipped_source_alpha = ImageChops.multiply(
+            pupil_art.getchannel("A"), eye_clips[side]
+        )
+        pupil_alpha = clipped_source_alpha.load()
         bounds = pupil_art.getchannel("A").getbbox()
         assert bounds is not None
-        fill = (*eye_colors[side], 255)
         for y in range(bounds[1], bounds[3]):
             for x in range(bounds[0], bounds[2]):
                 if pupil_alpha[x, y]:
-                    # Fully erase antialiased source pixels, while retaining
-                    # the black outline by limiting the patch to the clip.
+                    # Erase the source-position pupil inside its eye aperture;
+                    # the fixed black outline sits outside this Illustrator mask.
                     fill_pixels[x, y] = (*eye_colors[side], 255)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     clip_layer = Image.new("RGBA", expected_size, (255, 255, 255, 0))
     clip_layer.putalpha(eye_clip)
     clip_layer.save(output_dir / "pupil_clip.png", optimize=True)
+    for side in ("left", "right"):
+        single_clip = Image.new("RGBA", expected_size, (255, 255, 255, 0))
+        single_clip.putalpha(eye_clips[side])
+        single_clip.save(output_dir / f"pupil_clip_{side}.png", optimize=True)
+        pupil_images[side].save(output_dir / f"pupils_{side}.png", optimize=True)
     pupil_fill.save(output_dir / "pupil_fill.png", optimize=True)
     pupils.save(output_dir / "pupils.png", optimize=True)
     metadata = {
@@ -154,6 +173,7 @@ def build_assets(base_path: Path, sublayers_dir: Path, output_dir: Path) -> None
         "pupil_source_layers": EYE_SOURCES,
         "eye_fill_colors": {side: list(color) for side, color in eye_colors.items()},
         "pupil_components": ["Pupil", "Glint"],
+        "unmasked_pupils": True,
         "pupil_clip_source": "filled Illustrator Pupil/Mask clipping paths",
         "pupil_clip_expression": "Angry",
     }

@@ -589,6 +589,13 @@ class OpenGLWindow(Renderer):
         if self._illustrator_rig is None or not self._illustrator_rig_enabled:
             return source
         now = time.monotonic()
+        if self._left_drag is not None:
+            motion_velocity_x = self._drag_velocity_x
+        elif self._is_walking():
+            roam_x = self._roam_velocity[0]
+            motion_velocity_x = roam_x if abs(roam_x) > 1.0 else roam_x * 220.0
+        else:
+            motion_velocity_x = 0.0
         return self._illustrator_rig.compose(
             source,
             now,
@@ -600,6 +607,7 @@ class OpenGLWindow(Renderer):
             ear_flick_left=intent.ear_flick_left,
             ear_flick_right=intent.ear_flick_right,
             ear_led_pulse=intent.ear_led_pulse,
+            motion_velocity_x=motion_velocity_x,
         )
 
     def _can_track_eyes(self, intent: PetIntent) -> bool:

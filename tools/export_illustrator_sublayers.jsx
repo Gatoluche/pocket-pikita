@@ -96,6 +96,16 @@
         }
     }
 
+    function setGroupClipped(group, clipped) {
+        unlockItemAndParents(group);
+        try {
+            if (group.clipped != clipped) group.clipped = clipped;
+        } catch (error) {
+            throw new Error("Could not change clipping on temporary Illustrator group '" +
+                (group.name || "unnamed group") + "': " + error.message);
+        }
+    }
+
     function unlockItemAndParents(item) {
         var chain = [];
         var current = item;
@@ -323,7 +333,9 @@
         white.green = 255;
         white.blue = 255;
         try {
-            parentGroup.clipped = false;
+            unlockItemAndParents(parentGroup);
+            unlockItemAndParents(item);
+            setGroupClipped(parentGroup, false);
             item.clipping = false;
             item.hidden = false;
             item.filled = true;
@@ -337,7 +349,58 @@
             item.stroked = original.stroked;
             item.fillColor = original.fillColor;
             item.opacity = original.opacity;
-            parentGroup.clipped = original.groupClipped;
+            setGroupClipped(parentGroup, original.groupClipped);
+        }
+    }
+
+    function isPupilArtwork(item) {
+        var name = "";
+        try { name = item.name; } catch (e) {}
+        if (name != "Pupil" && name != "Glint") return false;
+        var names = groupPath(item);
+        for (var i = 0; i < names.length; i++) {
+            if (names[i] == "Pupil") return true;
+        }
+        return false;
+    }
+
+    function exportUnmaskedPupil(item, file) {
+        // Disable every clipped ancestor in this temporary copy so Illustrator
+        // exports the complete pupil disk and shine, then restore the source.
+        var clippedGroups = [];
+        var clippingItems = [];
+        var ancestor = item.parent;
+        while (ancestor && ancestor.typename != "Layer" && ancestor.typename != "Document") {
+            if (ancestor.typename == "GroupItem" && ancestor.clipped) {
+                clippedGroups.push({ group: ancestor, clipped: ancestor.clipped });
+                for (var i = 0; i < allPageItems.length; i++) {
+                    var entry = allPageItems[i];
+                    if (entry.item.parent == ancestor && isClipMask(entry.item)) {
+                        clippingItems.push({ item: entry.item, hidden: entry.hidden });
+                    }
+                }
+            }
+            ancestor = ancestor.parent;
+        }
+
+        try {
+            for (var groupIndex = 0; groupIndex < clippedGroups.length; groupIndex++) {
+                setGroupClipped(clippedGroups[groupIndex].group, false);
+            }
+            for (var maskIndex = 0; maskIndex < clippingItems.length; maskIndex++) {
+                setItemHidden(clippingItems[maskIndex].item, true);
+            }
+            exportPng(file);
+        } finally {
+            for (var restoreGroup = clippedGroups.length - 1; restoreGroup >= 0; restoreGroup--) {
+                setGroupClipped(
+                    clippedGroups[restoreGroup].group,
+                    clippedGroups[restoreGroup].clipped
+                );
+            }
+            for (var restoreMask = clippingItems.length - 1; restoreMask >= 0; restoreMask--) {
+                setItemHidden(clippingItems[restoreMask].item, clippingItems[restoreMask].hidden);
+            }
         }
     }
 
@@ -484,7 +547,9 @@
         isolateItem(item);
         var output = itemOutputPath(ownerRecord, item, index);
         var clipMask = isClipMask(item);
+        var unmaskedPupil = isPupilArtwork(item);
         if (clipMask) exportClipMask(item, output.file);
+        else if (unmaskedPupil) exportUnmaskedPupil(item, output.file);
         else exportPng(output.file);
 
         var itemName = "";
@@ -495,6 +560,7 @@
             item_type: item.typename,
             item_name: itemName,
             is_clip_mask: clipMask,
+            is_unmasked_pupil: unmaskedPupil,
             file: output.relative
         });
     }
@@ -551,6 +617,7 @@
             file.write("], \"item_type\": " + jsonString(objectEntry.item_type) +
                 ", \"item_name\": " + jsonString(objectEntry.item_name) +
                 ", \"is_clip_mask\": " + (objectEntry.is_clip_mask ? "true" : "false") +
+                ", \"is_unmasked_pupil\": " + (objectEntry.is_unmasked_pupil ? "true" : "false") +
                 ", \"file\": " + jsonString(objectEntry.file) + "}");
             file.write(p + 1 == objectEntries.length ? "\n" : ",\n");
         }
@@ -576,9 +643,9 @@
             exportLayer(layer, path);
         });
 
-        for (var groupIndex = 0; groupIndex < doc.groupItems.length; groupIndex++) {
-            var group = doc.groupItems[groupIndex];
-            if (isVisibleGroup(group)) visibleGroups.push(group);
+        for (var groupIndex = 0; groupIndex < allPageItems.length; groupIndex++) {
+            var group = allPageItems[groupIndex].item;
+            if (group.typename == "GroupItem" && isVisibleGroup(group)) visibleGroups.push(group);
         }
         for (var exportGroupIndex = 0; exportGroupIndex < visibleGroups.length; exportGroupIndex++) {
             exportGroup(visibleGroups[exportGroupIndex], exportGroupIndex);

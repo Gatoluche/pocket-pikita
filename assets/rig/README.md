@@ -1,61 +1,37 @@
-# Illustrator rig experiment
+# Illustrator part rig
 
-`layers/` contains transparent, 446×910 exports of the top-level groups in the
-PDF-compatible Illustrator file. All images use the same character-space canvas,
-so their pixels stay aligned when the renderer composes them. The PDF view only
-exposes top-level groups; nested Illustrator sublayers such as eye-expression
-spares are composited together in these exports.
+The runtime uses transparent, aligned 446×910 images. `layers/` contains the
+original layer composites, `sublayers/` contains the isolated Illustrator
+objects, and `parts/` contains the independently animated body parts built from
+those object exports. Pikita's shoulder panels, foreground arms, feet, ear
+inserts, LEDs, and each separate hair shape have their own PNGs and pivots.
 
-The renderer assembles the body, hair, ears, arms, and feet from these parts. It
-uses the existing `assets/*.png` sprites for facial expressions, including the
-cheek patches. The saved face visibility in the Illustrator document is not
-used to choose a base expression. Press **R** to switch between the assembled
-rig and the original full PNG sprite; the choice is saved in `settings.json`.
+Press **R** to switch between the assembled rig and the original full PNG
+sprite. The selection is saved in the ignored `settings.json` file.
 
-To regenerate the top-level exports, install `pypdf`, `Pillow`, and `NumPy`,
-then run `tools/export_illustrator_assets.py` with the local, ignored source
-file. The exporter also needs Poppler's `pdftoppm`; pass its path with
-`--pdftoppm` when it is not on `PATH`. It renders each PDF layer separately,
-so the Illustrator document's saved visibility configuration does not affect
-these top-level exports.
+## Regenerate the rig assets
 
-To export visible nested layers and artwork groups separately, open the source
-file in Illustrator and choose **File → Scripts → Other Script**, then select
-`tools/export_illustrator_sublayers.jsx`. It writes aligned 446×910 transparent
-PNGs under `assets/rig/sublayers/`, group-level exports under `groups/`, and
-individual Illustrator objects under `objects/`. Each object export is
-isolated from its siblings and keeps its aligned position on the 446×910
-canvas. `manifest.json` records the Illustrator layer path, group path, object
-type, and output file. The script opens a temporary copy and closes it without
-saving, so it does not change the source document. It temporarily unlocks
-visible source artwork and its parent layers in that copy so it can isolate
-locked parts during export.
+1. Open the ignored `Pikita V4.ai` in Illustrator.
+2. Choose **File → Scripts → Other Script** and run
+   `tools/export_illustrator_sublayers.jsx`.
+3. Run `python tools/build_rig_parts.py` to create `assets/rig/parts/`.
+4. To rebuild eye tracking, also run `python tools/build_eye_tracking_assets.py`.
 
-The first run produced fully transparent images for the nested layer entries.
-The updated exporter records ancestry while walking the layer tree, excludes
-artwork on parent layers from nested-layer exports, and exports individual
-visible artwork objects. These object PNGs can split eye glints and hair blocks
-when they are separate Illustrator objects. Rerun the script in Illustrator
-to regenerate the exports and manifest; this cannot be done from the command
-line because Illustrator must rasterize the document.
+The Illustrator script exports a temporary copy of the artwork and closes it
+without saving. It keeps every PNG aligned to the artboard, writes masks as
+white silhouettes, and exports pupil and glint artwork with clipped ancestor
+masks temporarily disabled. The source Illustrator document is unchanged.
 
-The runtime uses the three separated objects in `sublayers/objects/top_hair/`
-to sway the left, right, and front hair pieces independently. It removes the
-static copies from the full top-hair export before drawing the moving pieces,
-so the strands do not leave duplicate edges behind. If those object exports
-are missing or incomplete, the renderer falls back to the static top-hair
-layer. The separated ear LED objects pulse briefly during idle scanning and
-cursor attention, shifting to a warm amber that follows each ear's movement.
+The eye builder requires those full, unmasked pupil and glint exports. The
+application translates each eye's complete pupil-and-shine image, then applies
+that eye's fixed aperture at its original position. This preserves the black
+eye outline. The present tracked exports predate the unmasked-pupil flag, so
+eye tracking stays disabled until the Illustrator script is run again.
 
-To build the eye-tracking images, first rerun
-`tools/export_illustrator_sublayers.jsx` in Illustrator, then run
-`python tools/build_eye_tracking_assets.py`. The exporter marks each Illustrator
-clipping path and writes it as an aligned white silhouette instead of its normal
-invisible state. The builder combines the separate pupil disk and shine from
-the Angy eye spare, samples the cyan fill from `Base.png`, and preserves the
-actual clipping aperture. At runtime, the translated pupil is clipped against
-that fixed aperture, so the black eye outline stays visible as the pupil moves.
-Because these source masks come from the Angry eye spare, clipped tracking is
-limited to Angry until matching masks are exported for other expressions. The
-existing Base tracker remains available while those fresh Illustrator exports
-are pending.
+## Motion
+
+Part PNGs share a coordinate canvas and carry pivots in `parts/manifest.json`.
+The renderer applies damped angular lag from horizontal drag and walking speed
+to hair, ears, arms, and feet. Authored walking clips control arms and feet
+while he is walking. Ear LEDs keep their original yellow fill, with a separate
+soft blurred glow pass during attention flashes.

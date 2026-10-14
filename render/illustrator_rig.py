@@ -33,6 +33,13 @@ class IllustratorRig:
 
     def __init__(self, rig_dir: Path):
         self._rig_dir = rig_dir
+        self._independent = None
+        independent_manifest = rig_dir / "parts" / "manifest.json"
+        if independent_manifest.is_file():
+            from render.independent_rig import IndependentPartRig
+
+            self._independent = IndependentPartRig(rig_dir)
+            return
         manifest = json.loads((rig_dir / "manifest.json").read_text(encoding="utf-8"))
         self._width, self._height = manifest["canvas_size"]
         self._pivots = manifest["paired_layer_pivots"]
@@ -110,6 +117,8 @@ class IllustratorRig:
 
     @property
     def has_clipped_eye_tracking(self) -> bool:
+        if self._independent is not None:
+            return self._independent.has_clipped_eye_tracking
         return self._pupil_clip is not None
 
     @staticmethod
@@ -415,8 +424,23 @@ class IllustratorRig:
         ear_flick_left: float = 0.0,
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
+        motion_velocity_x: float = 0.0,
     ) -> pygame.Surface:
         """Return one assembled frame while preserving the selected PNG face."""
+        if self._independent is not None:
+            return self._independent.compose(
+                expression_surface,
+                seconds,
+                walking=walking,
+                walk_strength=walk_strength,
+                jumping=jumping,
+                gaze_x=gaze_x,
+                gaze_y=gaze_y,
+                ear_flick_left=ear_flick_left,
+                ear_flick_right=ear_flick_right,
+                ear_led_pulse=ear_led_pulse,
+                motion_velocity_x=motion_velocity_x,
+            )
         canvas = pygame.Surface(
             (self._width, self._height), pygame.SRCALPHA, 32
         )
