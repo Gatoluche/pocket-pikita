@@ -81,8 +81,8 @@ CURSOR_LED_PULSE_DURATION = 0.4
 CURSOR_TRACKABLE_EXPRESSIONS = (
     Expression.BASE,
     Expression.ANGRY,
-    Expression.BLUSH,
 )
+TRACKED_EYE_REGION = pygame.Rect(55, 340, 336, 120)
 SCREEN_EDGE_DISTANCE = 36
 JUMP_DURATION = 0.6
 DRAG_REST_ANGLE = 0.15
@@ -375,6 +375,10 @@ class OpenGLWindow(Renderer):
                 surface, (self._width, self._height)
             )
             self._textures[key] = self._make_texture(texture_surface)
+        self._base_angry_eye_art_matches = self._eye_regions_match(
+            self._surfaces.get(_normalize(Expression.BASE.value)),
+            self._surfaces.get(_normalize(Expression.ANGRY.value)),
+        )
 
         self._setup_gl()
         rig_manifest = assets_dir / "rig" / "manifest.json"
@@ -677,9 +681,37 @@ class OpenGLWindow(Renderer):
             or intent.blinking
         ):
             return False
+        if intent.talking:
+            return False
         if rig.has_clipped_eye_tracking:
-            return intent.expression is Expression.ANGRY and not intent.talking
-        return intent.expression is Expression.BASE and not intent.talking
+            return intent.expression is Expression.ANGRY or (
+                intent.expression is Expression.BASE
+                and self._base_angry_eye_art_matches
+            )
+        return intent.expression is Expression.BASE
+
+    @staticmethod
+    def _eye_regions_match(
+        first: pygame.Surface | None,
+        second: pygame.Surface | None,
+    ) -> bool:
+        """Verify that the Angry pupil aperture also matches the Base sprite."""
+        if first is None or second is None:
+            return False
+        if first.get_size() != second.get_size():
+            return False
+        if (
+            TRACKED_EYE_REGION.right > first.get_width()
+            or TRACKED_EYE_REGION.bottom > first.get_height()
+        ):
+            return False
+        first_eye_art = pygame.image.tostring(
+            first.subsurface(TRACKED_EYE_REGION), "RGBA", False
+        )
+        second_eye_art = pygame.image.tostring(
+            second.subsurface(TRACKED_EYE_REGION), "RGBA", False
+        )
+        return first_eye_art == second_eye_art
 
     def _upload_rig_texture(self, surface: pygame.Surface) -> int:
         texture_surface = pygame.transform.smoothscale(
