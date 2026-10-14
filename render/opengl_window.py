@@ -667,6 +667,14 @@ class OpenGLWindow(Renderer):
             motion_velocity_x = roam_x if abs(roam_x) > 1.0 else roam_x * 220.0
         else:
             motion_velocity_x = 0.0
+        idle_fidget_progress = intent.idle_fidget_progress
+        if (
+            self._left_drag is not None
+            or self._toss_active
+            or self._is_walking()
+            or self._is_jumping()
+        ):
+            idle_fidget_progress = None
         return self._illustrator_rig.compose(
             source,
             now,
@@ -679,6 +687,8 @@ class OpenGLWindow(Renderer):
             ear_flick_right=intent.ear_flick_right,
             ear_led_pulse=intent.ear_led_pulse,
             startle_progress=intent.startle_progress,
+            idle_fidget_progress=idle_fidget_progress,
+            idle_fidget_side=intent.idle_fidget_side,
             motion_velocity_x=motion_velocity_x,
             walk_seconds=max(0.0, now - self._walk_started),
         )

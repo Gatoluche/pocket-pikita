@@ -29,10 +29,16 @@
   authored recoil through the separate ears, arms, and hair before he settles.
 - His ear LEDs flash with the recoil, then fade back to their normal color.
 
+## Implemented: occasional idle fidget
+
+- Pikita rests without a constant body-part sway. Every so often, one floating
+  foot lifts and settles with a small counter-movement in his folded arms and
+  hair; the fidget side alternates.
+
 ## Later: authored animation and attention
 
-- Expand the clip library with idle fidgets, richer startled reactions, and
-  transitions between expressions.
+- Expand the clip library with richer startled reactions and transitions
+  between expressions.
 - Add more attention sources after cursor tracking: sound-producing windows,
   Windows notifications, and sudden screen color changes.
 - Add sound design and personality-driven reactions that support ordinary

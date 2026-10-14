@@ -58,46 +58,16 @@ class AnimationClip:
 
 # These clips are intentionally ordinary data: adding an authored movement does
 # not require changing the compositor's interpolation code.
+# Rest is still; visible idle movement comes from sparse one-shot clips.
 IDLE_CLIP = AnimationClip(
     "idle",
-    8.0,
+    1.0,
     {
-        "ear_left": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, 2.4), Keyframe(4.0, 0.0),
-            Keyframe(6.0, -2.4), Keyframe(8.0, 0.0),
-        ),
-        "ear_right": (
-            Keyframe(0.0, 1.6), Keyframe(2.0, -1.6), Keyframe(4.0, 1.6),
-            Keyframe(6.0, -1.6), Keyframe(8.0, 1.6),
-        ),
-        "arm_left": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, 0.9), Keyframe(4.0, 0.0),
-            Keyframe(6.0, -0.9), Keyframe(8.0, 0.0),
-        ),
-        "arm_right": (
-            Keyframe(0.0, 0.84), Keyframe(2.0, -0.84), Keyframe(4.0, 0.84),
-            Keyframe(6.0, -0.84), Keyframe(8.0, 0.84),
-        ),
-        "feet_left": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, 0.45), Keyframe(4.0, 0.0),
-            Keyframe(6.0, -0.45), Keyframe(8.0, 0.0),
-        ),
-        "feet_right": (
-            Keyframe(0.0, 0.32), Keyframe(2.0, -0.32), Keyframe(4.0, 0.32),
-            Keyframe(6.0, -0.32), Keyframe(8.0, 0.32),
-        ),
-        "hair_left": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, 1.1), Keyframe(4.0, 0.0),
-            Keyframe(6.0, -1.1), Keyframe(8.0, 0.0),
-        ),
-        "hair_right": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, -1.3), Keyframe(4.0, 0.0),
-            Keyframe(6.0, 1.3), Keyframe(8.0, 0.0),
-        ),
-        "hair_front": (
-            Keyframe(0.0, 0.0), Keyframe(2.0, 0.7), Keyframe(4.0, 0.0),
-            Keyframe(6.0, -0.7), Keyframe(8.0, 0.0),
-        ),
+        name: (Keyframe(0.0, 0.0), Keyframe(1.0, 0.0))
+        for name in (
+            "ear_left", "ear_right", "arm_left", "arm_right",
+            "feet_left", "feet_right", "hair_left", "hair_right", "hair_front",
+        )
     },
     loop=True,
 )
@@ -117,6 +87,52 @@ IDLE_GLANCE_CLIP = AnimationClip(
         "ear_led_pulse": (
             Keyframe(0.0, 0.0), Keyframe(0.16, 1.0, "ease_out"),
             Keyframe(0.78, 1.0), Keyframe(1.2, 0.0, "ease_in"),
+        ),
+    },
+)
+
+IDLE_FIDGET_CLIP = AnimationClip(
+    "idle foot fidget",
+    0.9,
+    {
+        "feet_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.18, 2.0, "ease_out"),
+            Keyframe(0.40, -0.7, "ease_out"), Keyframe(0.64, 0.25),
+            Keyframe(0.9, 0.0, "ease_in"),
+        ),
+        "feet_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.18, -0.45, "ease_out"),
+            Keyframe(0.40, 0.2), Keyframe(0.64, 0.0), Keyframe(0.9, 0.0),
+        ),
+        "foot_lift_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.16, 3.5, "ease_out"),
+            Keyframe(0.34, 1.0, "ease_in"), Keyframe(0.52, 0.0),
+            Keyframe(0.9, 0.0),
+        ),
+        "foot_lift_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.16, 0.6, "ease_out"),
+            Keyframe(0.34, 0.0), Keyframe(0.9, 0.0),
+        ),
+        "arm_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, 0.8, "ease_out"),
+            Keyframe(0.42, -0.25), Keyframe(0.9, 0.0, "ease_in"),
+        ),
+        "arm_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, -0.25, "ease_out"),
+            Keyframe(0.42, 0.0), Keyframe(0.9, 0.0, "ease_in"),
+        ),
+        "hair_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.14, 0.75, "ease_out"),
+            Keyframe(0.34, -0.3, "ease_out"), Keyframe(0.64, 0.0),
+            Keyframe(0.9, 0.0),
+        ),
+        "hair_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.14, -0.25, "ease_out"),
+            Keyframe(0.34, 0.15), Keyframe(0.64, 0.0), Keyframe(0.9, 0.0),
+        ),
+        "hair_front": (
+            Keyframe(0.0, 0.0), Keyframe(0.14, -0.35, "ease_out"),
+            Keyframe(0.34, 0.15), Keyframe(0.64, 0.0), Keyframe(0.9, 0.0),
         ),
     },
 )

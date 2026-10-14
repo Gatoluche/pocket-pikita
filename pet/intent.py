@@ -45,5 +45,6 @@ class PetIntent:
     ear_led_pulse: float = 0.0
     # Normalized progress for a brief, authored response to a poke.
     startle_progress: float | None = None
-    # Normalized progress for a brief, authored response to a poke.
-    startle_progress: float | None = None
+    # Progress and side for an occasional one-shot idle fidget.
+    idle_fidget_progress: float | None = None
+    idle_fidget_side: str = "left"

@@ -2,7 +2,12 @@
 
 import random
 
-from pet.animation import EAR_FLICK_CLIP, IDLE_GLANCE_CLIP, POKE_REACTION_CLIP
+from pet.animation import (
+    EAR_FLICK_CLIP,
+    IDLE_FIDGET_CLIP,
+    IDLE_GLANCE_CLIP,
+    POKE_REACTION_CLIP,
+)
 from pet.intent import Expression, PetIntent, Sound
 
 BLINK_DURATION = 0.12         # how long the eyes stay shut, in seconds
@@ -13,6 +18,7 @@ REACTION_DURATION = 0.6       # how long a poke reaction lasts, in seconds
 MIN_IDLE_GAP, MAX_IDLE_GAP = 7.0, 14.0
 MIN_EAR_FLICK_GAP, MAX_EAR_FLICK_GAP = 4.5, 8.0
 MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP = 4.0, 7.0
+MIN_IDLE_FIDGET_GAP, MAX_IDLE_FIDGET_GAP = 9.0, 16.0
 IDLE_EXPRESSIONS = (Expression.SMUG, Expression.WINK, Expression.UNIMPRESSED)
 POKE_EXPRESSIONS = (Expression.HAPPY, Expression.WINK, Expression.BLUSH)
 GLANCE_DIRECTIONS = (
@@ -42,6 +48,11 @@ class Brain:
         )
         self._idle_glance_elapsed: float | None = None
         self._idle_glance_direction = (1.0, 0.0)
+        self._idle_fidget_cooldown = random.uniform(
+            MIN_IDLE_FIDGET_GAP, MAX_IDLE_FIDGET_GAP
+        )
+        self._idle_fidget_elapsed: float | None = None
+        self._idle_fidget_side = "left"
 
     def _interrupt_idle_motion(self) -> None:
         interrupted_blink = (
@@ -60,6 +71,10 @@ class Brain:
         self._idle_glance_elapsed = None
         self._idle_glance_cooldown = random.uniform(
             MIN_IDLE_GLANCE_GAP, MAX_IDLE_GLANCE_GAP
+        )
+        self._idle_fidget_elapsed = None
+        self._idle_fidget_cooldown = random.uniform(
+            MIN_IDLE_FIDGET_GAP, MAX_IDLE_FIDGET_GAP
         )
 
     def _idle_motion(self, dt: float) -> dict[str, float]:
@@ -111,6 +126,29 @@ class Brain:
             "gaze_y": glance["gaze_y"] * direction_y,
             "ear_led_pulse": glance["ear_led_pulse"],
         }
+
+    def _idle_fidget(self, dt: float) -> tuple[float | None, str]:
+        if self._idle_fidget_elapsed is None:
+            self._idle_fidget_cooldown -= dt
+            if self._idle_fidget_cooldown <= 0.0:
+                self._idle_fidget_elapsed = 0.0
+                self._idle_fidget_side = (
+                    "right" if self._idle_fidget_side == "left" else "left"
+                )
+
+        if self._idle_fidget_elapsed is None:
+            return None, self._idle_fidget_side
+
+        self._idle_fidget_elapsed += dt
+        if self._idle_fidget_elapsed >= IDLE_FIDGET_CLIP.duration:
+            self._idle_fidget_elapsed = None
+            self._idle_fidget_cooldown = random.uniform(
+                MIN_IDLE_FIDGET_GAP, MAX_IDLE_FIDGET_GAP
+            )
+            return None, self._idle_fidget_side
+
+        progress = self._idle_fidget_elapsed / IDLE_FIDGET_CLIP.duration
+        return progress, self._idle_fidget_side
 
     def update(
         self,
@@ -194,8 +232,11 @@ class Brain:
 
         idle_motion = self._idle_motion(dt)
         idle_motion.update(self._idle_glance(dt))
+        fidget_progress, fidget_side = self._idle_fidget(dt)
         return PetIntent(
             expression=Expression.BASE,
             blinking=self._eyes_shut,
+            idle_fidget_progress=fidget_progress,
+            idle_fidget_side=fidget_side,
             **idle_motion,
         )

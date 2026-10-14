@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pygame
 
-from pet.animation import IDLE_CLIP, POKE_REACTION_CLIP, WALK_CLIP
+from pet.animation import (
+    IDLE_CLIP,
+    IDLE_FIDGET_CLIP,
+    POKE_REACTION_CLIP,
+    WALK_CLIP,
+)
 
 
 @dataclass(frozen=True)
@@ -425,6 +430,8 @@ class IllustratorRig:
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
         startle_progress: float | None = None,
+        idle_fidget_progress: float | None = None,
+        idle_fidget_side: str = "left",
         motion_velocity_x: float = 0.0,
         walk_seconds: float | None = None,
     ) -> pygame.Surface:
@@ -442,6 +449,8 @@ class IllustratorRig:
                 ear_flick_right=ear_flick_right,
                 ear_led_pulse=ear_led_pulse,
                 startle_progress=startle_progress,
+                idle_fidget_progress=idle_fidget_progress,
+                idle_fidget_side=idle_fidget_side,
                 motion_velocity_x=motion_velocity_x,
                 walk_seconds=walk_seconds,
             )
@@ -460,11 +469,46 @@ class IllustratorRig:
             else {}
         )
         ear_led_pulse = max(ear_led_pulse, startle.get("ear_led_pulse", 0.0))
+        fidget = (
+            IDLE_FIDGET_CLIP.sample(
+                max(0.0, min(1.0, idle_fidget_progress))
+                * IDLE_FIDGET_CLIP.duration
+            )
+            if idle_fidget_progress is not None
+            else {}
+        )
+        if idle_fidget_side == "right":
+            mirrored = {}
+            for name, value in fidget.items():
+                if name.endswith("_left"):
+                    name = name[:-5] + "_right"
+                elif name.endswith("_right"):
+                    name = name[:-6] + "_left"
+                mirrored[name] = value
+            fidget = mirrored
 
-        feet_left = walk_motion.get("feet_left", 0.0) * strength + idle_motion["feet_left"] * idle
-        feet_right = walk_motion.get("feet_right", 0.0) * strength + idle_motion["feet_right"] * idle
-        self._draw_rotated(canvas, self._parts["Feet"]["left"], feet_left)
-        self._draw_rotated(canvas, self._parts["Feet"]["right"], feet_right)
+        feet_left = (
+            walk_motion.get("feet_left", 0.0) * strength
+            + idle_motion["feet_left"] * idle
+            + fidget.get("feet_left", 0.0)
+        )
+        feet_right = (
+            walk_motion.get("feet_right", 0.0) * strength
+            + idle_motion["feet_right"] * idle
+            + fidget.get("feet_right", 0.0)
+        )
+        self._draw_rotated(
+            canvas,
+            self._parts["Feet"]["left"],
+            feet_left,
+            (0.0, -fidget.get("foot_lift_left", 0.0)),
+        )
+        self._draw_rotated(
+            canvas,
+            self._parts["Feet"]["right"],
+            feet_right,
+            (0.0, -fidget.get("foot_lift_right", 0.0)),
+        )
 
         canvas.blit(self._layers["Body"], (0, 0))
         canvas.blit(self._layers["Bottom Hair"], (0, 0))
@@ -507,6 +551,8 @@ class IllustratorRig:
         arm_right = walk_motion.get("arm_right", 0.0) * strength + idle_motion["arm_right"] * idle
         arm_left += startle.get("arm_left", 0.0)
         arm_right += startle.get("arm_right", 0.0)
+        arm_left += fidget.get("arm_left", 0.0)
+        arm_right += fidget.get("arm_right", 0.0)
         if jumping:
             arm_left += 5.0
             arm_right -= 5.0
@@ -520,7 +566,9 @@ class IllustratorRig:
                 self._draw_rotated(
                     canvas,
                     part,
-                    idle_motion[f"hair_{side}"] + startle.get(f"hair_{side}", 0.0),
+                    idle_motion[f"hair_{side}"]
+                    + startle.get(f"hair_{side}", 0.0)
+                    + fidget.get(f"hair_{side}", 0.0),
                 )
 
         return canvas

@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pygame
 
-from pet.animation import IDLE_CLIP, POKE_REACTION_CLIP, WALK_CLIP
+from pet.animation import (
+    IDLE_CLIP,
+    IDLE_FIDGET_CLIP,
+    POKE_REACTION_CLIP,
+    WALK_CLIP,
+)
 
 
 @dataclass(frozen=True)
@@ -234,6 +239,8 @@ class IndependentPartRig:
         ear_flick_right: float = 0.0,
         ear_led_pulse: float = 0.0,
         startle_progress: float | None = None,
+        idle_fidget_progress: float | None = None,
+        idle_fidget_side: str = "left",
         motion_velocity_x: float = 0.0,
         walk_seconds: float | None = None,
     ) -> pygame.Surface:
@@ -253,6 +260,23 @@ class IndependentPartRig:
             else {}
         )
         ear_led_pulse = max(ear_led_pulse, startle.get("ear_led_pulse", 0.0))
+        fidget = (
+            IDLE_FIDGET_CLIP.sample(
+                max(0.0, min(1.0, idle_fidget_progress))
+                * IDLE_FIDGET_CLIP.duration
+            )
+            if idle_fidget_progress is not None
+            else {}
+        )
+        if idle_fidget_side == "right":
+            mirrored = {}
+            for name, value in fidget.items():
+                if name.endswith("_left"):
+                    name = name[:-5] + "_right"
+                elif name.endswith("_right"):
+                    name = name[:-6] + "_left"
+                mirrored[name] = value
+            fidget = mirrored
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
         ear_angles: dict[str, float] = {}
         for side, flick in (
@@ -314,18 +338,22 @@ class IndependentPartRig:
                     f"arm_{side}", part, motion_velocity_x, dt
                 )
                 value += startle.get(f"arm_{side}", 0.0)
+                value += fidget.get(f"arm_{side}", 0.0)
                 if jumping:
                     value += 5.0 if side == "left" else -5.0
             elif role == "foot":
-                value = idle[f"feet_{side}"] + self._spring_angle(
+                value = idle[f"feet_{side}"] + fidget.get(f"feet_{side}", 0.0)
+                value += self._spring_angle(
                     name, part, motion_velocity_x, dt
                 )
+                foot_offset_y = -fidget.get(f"foot_lift_{side}", 0.0)
             elif role == "hair":
                 value = self._spring_angle(name, part, motion_velocity_x, dt)
                 if name.startswith("top_hair_"):
                     value += idle.get(f"hair_{side}", 0.0)
                 if name.startswith(("top_hair_", "bottom_hair_")):
                     value += startle.get(f"hair_{side}", 0.0)
+                    value += fidget.get(f"hair_{side}", 0.0)
             elif role == "ear_led":
                 value = ear_angles.get(side or "", 0.0)
             else:
@@ -348,6 +376,8 @@ class IndependentPartRig:
                     position[0] + round(foot_offset_x * strength),
                     position[1] + round(foot_offset_y * strength),
                 )
+            elif role == "foot" and foot_offset_y:
+                position = (position[0], position[1] + round(foot_offset_y))
             canvas.blit(image, position)
 
         return canvas
