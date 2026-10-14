@@ -260,6 +260,15 @@ class _Rect(ctypes.Structure):
     ]
 
 
+class _MonitorInfo(ctypes.Structure):
+    _fields_ = [
+        ("size", wintypes.DWORD),
+        ("monitor", _Rect),
+        ("work", _Rect),
+        ("flags", wintypes.DWORD),
+    ]
+
+
 class _Size(ctypes.Structure):
     _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
 
@@ -349,11 +358,12 @@ class OpenGLWindow(Renderer):
         self._overlay_sprite_width = self._width
         self._overlay_sprite_height = self._height
         self._overlay_canvas_size = _fixed_overlay_canvas_size(self._width, self._height)
-        position = settings.get("position")
-        if isinstance(position, list) and len(position) == 2:
-            self._user.SetWindowPos(
-                self._hwnd, 0, int(position[0]), int(position[1]), 0, 0, 0x1 | 0x4
-            )
+        self._monitors: list[_Rect] = []
+        self._next_monitor_refresh = 0.0
+        position = self._startup_position(settings.get("position"))
+        self._user.SetWindowPos(
+            self._hwnd, 0, position[0], position[1], 0, 0, 0x1 | 0x4
+        )
         self._set_topmost(self._always_on_top)
 
         self._textures: dict[str, int] = {}
@@ -434,8 +444,6 @@ class OpenGLWindow(Renderer):
         self._jump_started = 0.0
         self._peek_target: tuple[int, int] | None = None
         self._peek_started = 0.0
-        self._monitors: list[_Rect] = []
-        self._next_monitor_refresh = 0.0
         self._desktop_icons = DesktopIcons()
         self._next_icon_try = self._last_roam_time + random.uniform(20.0, 35.0)
         self._eating_icon: DesktopIcon | None = None
@@ -456,8 +464,7 @@ class OpenGLWindow(Renderer):
             self._held_squeaks = []
             self._held_channel = None
 
-        if settings.get("desktop_transparent", False):
-            self._set_desktop_transparency(True)
+        self._set_desktop_transparency(True)
 
     def _configure_win32(self) -> None:
         self._user = ctypes.windll.user32
@@ -478,6 +485,10 @@ class OpenGLWindow(Renderer):
         self._user.EnumDisplayMonitors.argtypes = [
             wintypes.HDC, ctypes.POINTER(_Rect), _MonitorEnumProc, wintypes.LPARAM
         ]
+        self._user.GetMonitorInfoW.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(_MonitorInfo)
+        ]
+        self._user.GetMonitorInfoW.restype = wintypes.BOOL
         self._user.CreateWindowExW.argtypes = [
             ctypes.c_uint, wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_uint,
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -530,7 +541,6 @@ class OpenGLWindow(Renderer):
             x, y = window.left, window.top
         settings = {
             "position": [x, y],
-            "desktop_transparent": self._desktop_transparent,
             "always_on_top": self._always_on_top,
             "illustrator_rig": self._illustrator_rig_enabled,
         }
@@ -1410,6 +1420,56 @@ class OpenGLWindow(Renderer):
         self._monitors = monitors
         self._next_monitor_refresh = time.monotonic() + 2.0
         return self._monitors
+
+    def _startup_position(self, saved_position: object) -> tuple[int, int]:
+        """Keep Pikita on the monitor beside the primary display at startup."""
+        monitors: list[tuple[_Rect, bool]] = []
+
+        def collect(handle, _dc, _rect, _data) -> bool:
+            info = _MonitorInfo()
+            info.size = ctypes.sizeof(_MonitorInfo)
+            if self._user.GetMonitorInfoW(handle, ctypes.byref(info)):
+                bounds = info.monitor
+                monitors.append((
+                    _Rect(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    bool(info.flags & 1),
+                ))
+            return True
+
+        callback = _MonitorEnumProc(collect)
+        self._user.EnumDisplayMonitors(None, None, callback, 0)
+        if not monitors:
+            if isinstance(saved_position, list) and len(saved_position) == 2:
+                return int(saved_position[0]), int(saved_position[1])
+            return 0, 0
+
+        primary = next((rect for rect, is_primary in monitors if is_primary), monitors[0][0])
+        secondary = [rect for rect, is_primary in monitors if not is_primary]
+        if not secondary:
+            secondary = [primary]
+
+        def distance_from_primary(rect: _Rect) -> tuple[int, int]:
+            gap_x = max(primary.left - rect.right, rect.left - primary.right, 0)
+            gap_y = max(primary.top - rect.bottom, rect.top - primary.bottom, 0)
+            return gap_x * gap_x + gap_y * gap_y, abs(rect.left - primary.right)
+
+        target = min(secondary, key=distance_from_primary)
+        if isinstance(saved_position, list) and len(saved_position) == 2:
+            try:
+                x, y = int(saved_position[0]), int(saved_position[1])
+            except (TypeError, ValueError):
+                x = y = -1
+            if (
+                target.left <= x
+                and y >= target.top
+                and x + self._width <= target.right
+                and y + self._height <= target.bottom
+            ):
+                return x, y
+
+        x = target.left + (target.right - target.left - self._width) // 2
+        y = target.bottom - self._height - 3
+        return x, y
 
     @staticmethod
     def _monitor_for_window(window: _Rect, monitors: list[_Rect]) -> _Rect | None:

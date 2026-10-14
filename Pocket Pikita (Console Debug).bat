@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Pocket Pikita
+title Pocket Pikita - Console Debug
 cd /d "%~dp0"
 
 REM Prefer the Python installation this project was built with.
