@@ -27,7 +27,9 @@ individual Illustrator objects under `objects/`. Each object export is
 isolated from its siblings and keeps its aligned position on the 446×910
 canvas. `manifest.json` records the Illustrator layer path, group path, object
 type, and output file. The script opens a temporary copy and closes it without
-saving, so it does not change the source document.
+saving, so it does not change the source document. It temporarily unlocks
+visible source artwork and its parent layers in that copy so it can isolate
+locked parts during export.
 
 The first run produced fully transparent images for the nested layer entries.
 The updated exporter records ancestry while walking the layer tree, excludes

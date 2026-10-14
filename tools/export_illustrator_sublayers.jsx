@@ -85,6 +85,49 @@
         return true;
     }
 
+    function setLayerVisible(layer, visible) {
+        if (layer.visible != visible) layer.visible = visible;
+    }
+
+    function setItemHidden(item, hidden) {
+        if (item.hidden != hidden) item.hidden = hidden;
+    }
+
+    function unlockItemAndParents(item) {
+        var chain = [];
+        var current = item;
+        while (current && current.typename != "Document") {
+            chain.push(current);
+            if (current.typename == "Layer") break;
+            current = current.parent;
+        }
+        for (var i = chain.length - 1; i >= 0; i--) {
+            try {
+                if (chain[i].locked) chain[i].locked = false;
+            } catch (error) {
+                var name = "unnamed artwork";
+                try { name = chain[i].name || name; } catch (nameError) {}
+                throw new Error("Could not unlock temporary Illustrator item '" + name + "': " + error.message);
+            }
+        }
+    }
+
+    function unlockSourceArtwork() {
+        for (var i = 0; i < allLayers.length; i++) {
+            var layerRecord = allLayers[i];
+            if (!layerAndParentsWereVisible(layerRecord.layer)) continue;
+            try {
+                if (layerRecord.layer.locked) layerRecord.layer.locked = false;
+            } catch (error) {
+                throw new Error("Could not unlock temporary Illustrator layer '" +
+                    layerRecord.path.join(" / ") + "': " + error.message);
+            }
+        }
+        for (var j = 0; j < allPageItems.length; j++) {
+            if (allPageItems[j].sourceVisible) unlockItemAndParents(allPageItems[j].item);
+        }
+    }
+
     function itemAndParentsWereVisible(item) {
         var current = item;
         while (current && current.typename != "Layer" && current.typename != "Document") {
@@ -104,7 +147,10 @@
             var item = doc.pageItems[i];
             var hidden = false;
             try { hidden = item.hidden; } catch (e) {}
-            allPageItems.push({ item: item, hidden: hidden });
+            allPageItems.push({ item: item, hidden: hidden, sourceVisible: false });
+        }
+        for (var j = 0; j < allPageItems.length; j++) {
+            allPageItems[j].sourceVisible = itemAndParentsWereVisible(allPageItems[j].item);
         }
     }
 
@@ -275,26 +321,26 @@
             var record = allLayers[i];
             var partOfTargetTree = recordIsUnder(record, targetRecord) ||
                 recordIsUnder(targetRecord, record);
-            record.layer.visible = record.visible && partOfTargetTree;
+            setLayerVisible(record.layer, record.visible && partOfTargetTree);
         }
 
         for (var j = 0; j < allPageItems.length; j++) {
             var entry = allPageItems[j];
-            entry.item.hidden = entry.hidden;
+            setItemHidden(entry.item, entry.hidden);
             var ownerRecord = findRecord(itemLayer(entry.item));
-            if (!ownerRecord || !recordIsUnder(ownerRecord, targetRecord)) {
-                entry.item.hidden = true;
+            if (entry.sourceVisible && (!ownerRecord || !recordIsUnder(ownerRecord, targetRecord))) {
+                setItemHidden(entry.item, true);
             }
         }
 
         for (var k = 0; k < allPageItems.length; k++) {
             var targetItem = allPageItems[k].item;
             var targetOwner = findRecord(itemLayer(targetItem));
-            if (!targetOwner || !recordIsUnder(targetOwner, targetRecord) || allPageItems[k].hidden) continue;
+            if (!targetOwner || !recordIsUnder(targetOwner, targetRecord) || !allPageItems[k].sourceVisible) continue;
             for (var m = 0; m < allPageItems.length; m++) {
                 var possibleMask = allPageItems[m];
                 if (isRequiredClipMask(possibleMask.item, targetItem)) {
-                    possibleMask.item.hidden = possibleMask.hidden;
+                    setItemHidden(possibleMask.item, possibleMask.hidden);
                 }
             }
         }
@@ -304,18 +350,18 @@
         var targetLayer = findRecord(itemLayer(item));
         for (var i = 0; i < allLayers.length; i++) {
             var record = allLayers[i];
-            record.layer.visible = record.visible && recordIsUnder(targetLayer, record);
+            setLayerVisible(record.layer, record.visible && recordIsUnder(targetLayer, record));
         }
 
         for (var j = 0; j < allPageItems.length; j++) {
             var entry = allPageItems[j];
-            entry.item.hidden = entry.hidden;
+            setItemHidden(entry.item, entry.hidden);
         }
         for (var k = 0; k < allPageItems.length; k++) {
             var candidate = allPageItems[k].item;
             var keep = isItemUnder(candidate, item) || isItemUnder(item, candidate) ||
                 isRequiredClipMask(candidate, item);
-            if (!keep) allPageItems[k].item.hidden = true;
+            if (!keep && allPageItems[k].sourceVisible) setItemHidden(allPageItems[k].item, true);
         }
     }
 
@@ -461,6 +507,7 @@
         doc = app.open(workingCopy);
         addLayers(doc.layers, [], []);
         collectPageItems();
+        unlockSourceArtwork();
         measureContent();
 
         var artboard = doc.artboards.add(bounds);
