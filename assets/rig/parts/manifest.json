@@ -32,12 +32,12 @@
     "body": {
       "file": "body.png",
       "pivot": [
-        0.0,
-        0.0
+        223.0,
+        594.0
       ],
       "role": "torso",
       "side": null,
-      "max_angle": 0.0,
+      "max_angle": 1.4,
       "z": 20,
       "order": 0
     },
@@ -125,18 +125,6 @@
       "z": 38,
       "order": 0
     },
-    "ear_glow_left": {
-      "file": "ear_glow_left.png",
-      "pivot": [
-        76.0,
-        258.0
-      ],
-      "role": "ear_glow",
-      "side": "left",
-      "max_angle": 3.5,
-      "z": 36,
-      "order": 0
-    },
     "ear_right": {
       "file": "ear_right.png",
       "pivot": [
@@ -171,18 +159,6 @@
       "side": "right",
       "max_angle": 0.0,
       "z": 38,
-      "order": 0
-    },
-    "ear_glow_right": {
-      "file": "ear_glow_right.png",
-      "pivot": [
-        370.0,
-        258.0
-      ],
-      "role": "ear_glow",
-      "side": "right",
-      "max_angle": 3.5,
-      "z": 36,
       "order": 0
     },
     "bottom_hair_static": {
@@ -368,24 +344,24 @@
     "faces": {
       "file": "faces.png",
       "pivot": [
-        0.0,
-        0.0
+        223.0,
+        543.0
       ],
-      "role": "static",
+      "role": "head",
       "side": null,
-      "max_angle": 0.0,
+      "max_angle": 1.2,
       "z": 40,
       "order": 0
     },
     "frame": {
       "file": "frame.png",
       "pivot": [
-        0.0,
-        0.0
+        223.0,
+        543.0
       ],
-      "role": "static",
+      "role": "head",
       "side": null,
-      "max_angle": 0.0,
+      "max_angle": 1.2,
       "z": 50,
       "order": 0
     }
@@ -409,8 +385,6 @@
     "bottom_hair_00104",
     "ear_left",
     "ear_right",
-    "ear_glow_left",
-    "ear_glow_right",
     "ear_led_left",
     "ear_led_right",
     "ear_anchor_left",
@@ -429,7 +403,7 @@
     "tracking_enabled_only_when_unmasked_export_is_verified": true
   },
   "physics": {
-    "description": "Per-part damped angular lag follows horizontal motion.",
-    "max_speed_px_s": 300.0
+    "description": "Damped angular and positional lag follows two-dimensional motion.",
+    "max_speed_px_s": 450.0
   }
 }

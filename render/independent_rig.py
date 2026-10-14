@@ -42,6 +42,28 @@ class _Spring:
         return self.angle
 
 
+@dataclass
+class _VectorSpring:
+    x: float = 0.0
+    y: float = 0.0
+    speed_x: float = 0.0
+    speed_y: float = 0.0
+
+    def step(self, target: tuple[float, float], dt: float) -> tuple[float, float]:
+        stiffness, damping = 48.0, 13.5
+        acceleration_x = (
+            (target[0] - self.x) * stiffness - self.speed_x * damping
+        )
+        acceleration_y = (
+            (target[1] - self.y) * stiffness - self.speed_y * damping
+        )
+        self.speed_x += acceleration_x * dt
+        self.speed_y += acceleration_y * dt
+        self.x += self.speed_x * dt
+        self.y += self.speed_y * dt
+        return self.x, self.y
+
+
 class IndependentPartRig:
     """Assemble each moving body part from an aligned transparent PNG."""
 
@@ -86,7 +108,9 @@ class IndependentPartRig:
         self._extend_face_mask_over_cheeks(self._face_mask)
         self._masked_faces: dict[int, pygame.Surface] = {}
         self._springs: dict[str, _Spring] = {}
+        self._offset_springs: dict[str, _VectorSpring] = {}
         self._frame_angles: dict[str, float] = {}
+        self._frame_offsets: dict[str, tuple[float, float]] = {}
         self._last_compose_time: float | None = None
         self._eye_assets = self._load_verified_eye_assets(rig_dir / "eyes")
         self.has_clipped_eye_tracking = self._eye_assets is not None
@@ -213,18 +237,52 @@ class IndependentPartRig:
         self,
         key: str,
         part: _Part,
-        velocity_x: float,
+        velocity: tuple[float, float],
         dt: float,
     ) -> float:
         if part.max_angle <= 0.0:
             return 0.0
         if key in self._frame_angles:
             return self._frame_angles[key]
-        speed_limit = 300.0
-        target = max(-1.0, min(1.0, velocity_x / speed_limit)) * part.max_angle
+        speed_limit = 450.0
+        lag = max(
+            -1.0,
+            min(1.0, (velocity[0] + velocity[1] * 0.35) / speed_limit),
+        )
+        target = -lag * part.max_angle
         angle = self._springs.setdefault(key, _Spring()).step(target, dt)
         self._frame_angles[key] = angle
         return angle
+
+    def _motion_offset(
+        self,
+        key: str,
+        role: str,
+        velocity: tuple[float, float],
+        dt: float,
+    ) -> tuple[float, float]:
+        if key in self._frame_offsets:
+            return self._frame_offsets[key]
+        maximum = {
+            "hair": 5.5,
+            "ear": 2.5,
+            "arm": 2.0,
+            "upper_arm": 1.6,
+            "foot": 2.0,
+            "torso": 1.0,
+            "head": 1.1,
+            "ear_led": 2.5,
+        }.get(role, 0.0)
+        speed_limit = 450.0
+        target = (
+            max(-1.0, min(1.0, -velocity[0] / speed_limit)) * maximum,
+            max(-1.0, min(1.0, -velocity[1] / speed_limit)) * maximum,
+        )
+        offset = self._offset_springs.setdefault(key, _VectorSpring()).step(
+            target, dt
+        )
+        self._frame_offsets[key] = offset
+        return offset
 
     def compose(
         self,
@@ -237,11 +295,10 @@ class IndependentPartRig:
         gaze_y: float = 0.0,
         ear_flick_left: float = 0.0,
         ear_flick_right: float = 0.0,
-        ear_led_pulse: float = 0.0,
         startle_progress: float | None = None,
         idle_fidget_progress: float | None = None,
         idle_fidget_side: str = "left",
-        motion_velocity_x: float = 0.0,
+        motion_velocity: tuple[float, float] = (0.0, 0.0),
         walk_seconds: float | None = None,
     ) -> pygame.Surface:
         now = time.monotonic()
@@ -250,6 +307,7 @@ class IndependentPartRig:
         )
         self._last_compose_time = now
         self._frame_angles.clear()
+        self._frame_offsets.clear()
         idle = IDLE_CLIP.sample(seconds)
         walk = WALK_CLIP.sample(seconds if walk_seconds is None else walk_seconds)
         startle = (
@@ -259,7 +317,6 @@ class IndependentPartRig:
             if startle_progress is not None
             else {}
         )
-        ear_led_pulse = max(ear_led_pulse, startle.get("ear_led_pulse", 0.0))
         fidget = (
             IDLE_FIDGET_CLIP.sample(
                 max(0.0, min(1.0, idle_fidget_progress))
@@ -287,7 +344,7 @@ class IndependentPartRig:
             if ear is None:
                 continue
             angle = idle[f"ear_{side}"] + self._spring_angle(
-                f"ear_{side}", ear, motion_velocity_x, dt
+                f"ear_{side}", ear, motion_velocity, dt
             )
             angle += flick - 2.0 * max(-1.0, min(1.0, gaze_x))
             angle += startle.get(f"ear_{side}", 0.0)
@@ -305,37 +362,22 @@ class IndependentPartRig:
             role, side = part.role, part.side
             foot_offset_x = 0.0
             foot_offset_y = 0.0
-            if role == "ear_glow":
-                intensity = max(0.0, min(1.0, ear_led_pulse))
-                if intensity <= 0:
-                    continue
-                image, position = self._rotation(
-                    part.image,
-                    part.pivot,
-                    part.origin,
-                    ear_angles.get(part.side or "", 0.0),
-                )
-                glow = image.copy()
-                glow.set_alpha(round(210 * intensity))
-                canvas.blit(glow, position)
-                continue
-
             if role in ("arm", "upper_arm") and walking:
                 value = walk.get(f"arm_{side}", 0.0) * strength
-                # Walking is authored motion; keep the inertial state from
-                # accumulating invisibly while it has control of the limb.
-                self._spring_angle(f"arm_{side}", part, 0.0, dt)
+                value += self._spring_angle(
+                    f"arm_{side}", part, motion_velocity, dt
+                )
             elif role == "foot" and walking:
                 value = walk.get(f"feet_{side}", 0.0) * strength
-                direction = -1.0 if motion_velocity_x < 0.0 else 1.0
+                value += self._spring_angle(name, part, motion_velocity, dt)
+                direction = -1.0 if motion_velocity[0] < 0.0 else 1.0
                 foot_offset_x = walk.get(f"foot_stride_{side}", 0.0) * direction
                 foot_offset_y = -walk.get(f"foot_lift_{side}", 0.0)
-                self._spring_angle(name, part, 0.0, dt)
             elif role == "ear":
                 value = ear_angles.get(side or "", 0.0)
             elif role in ("arm", "upper_arm"):
                 value = idle[f"arm_{side}"] + self._spring_angle(
-                    f"arm_{side}", part, motion_velocity_x, dt
+                    f"arm_{side}", part, motion_velocity, dt
                 )
                 value += startle.get(f"arm_{side}", 0.0)
                 value += fidget.get(f"arm_{side}", 0.0)
@@ -344,11 +386,11 @@ class IndependentPartRig:
             elif role == "foot":
                 value = idle[f"feet_{side}"] + fidget.get(f"feet_{side}", 0.0)
                 value += self._spring_angle(
-                    name, part, motion_velocity_x, dt
+                    name, part, motion_velocity, dt
                 )
                 foot_offset_y = -fidget.get(f"foot_lift_{side}", 0.0)
             elif role == "hair":
-                value = self._spring_angle(name, part, motion_velocity_x, dt)
+                value = self._spring_angle(name, part, motion_velocity, dt)
                 if name.startswith("top_hair_"):
                     value += idle.get(f"hair_{side}", 0.0)
                 if name.startswith(("top_hair_", "bottom_hair_")):
@@ -356,8 +398,41 @@ class IndependentPartRig:
                     value += fidget.get(f"hair_{side}", 0.0)
             elif role == "ear_led":
                 value = ear_angles.get(side or "", 0.0)
+            elif role in ("torso", "head"):
+                value = self._spring_angle(name, part, motion_velocity, dt)
             else:
                 value = 0.0
+
+            spring_key = (
+                f"arm_{side}" if role in ("arm", "upper_arm")
+                else f"ear_{side}" if role in ("ear", "ear_led")
+                else name
+            )
+            offset = self._motion_offset(
+                spring_key, role, motion_velocity, dt
+            )
+
+            if role == "head":
+                image, position = self._rotation(
+                    part.image, part.pivot, part.origin, value
+                )
+                position = (
+                    position[0] + round(offset[0]),
+                    position[1] + round(offset[1]),
+                )
+                canvas.blit(image, position)
+                if name == "frame":
+                    face_image, face_position = self._rotation(
+                        face, part.pivot, (0, 0), value
+                    )
+                    canvas.blit(
+                        face_image,
+                        (
+                            face_position[0] + round(offset[0]),
+                            face_position[1] + round(offset[1]),
+                        ),
+                    )
+                continue
 
             if role == "static" or role == "hair_static" or role == "ear_anchor":
                 if name == "faces":
@@ -370,7 +445,13 @@ class IndependentPartRig:
                     canvas.blit(face, (0, 0))
                 continue
 
-            image, position = self._rotation(part.image, part.pivot, part.origin, value)
+            image, position = self._rotation(
+                part.image, part.pivot, part.origin, value
+            )
+            position = (
+                position[0] + round(offset[0]),
+                position[1] + round(offset[1]),
+            )
             if role == "foot" and walking:
                 position = (
                     position[0] + round(foot_offset_x * strength),

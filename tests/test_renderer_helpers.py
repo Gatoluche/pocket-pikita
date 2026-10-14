@@ -6,7 +6,6 @@ import pygame
 from render.opengl_window import (
     _clean_transparent_edge,
     _fixed_overlay_canvas_size,
-    _grab_angle,
     _jump_motion,
     _normalize,
     _perspective_scale,
@@ -21,16 +20,6 @@ from render.opengl_window import (
 
 
 class RendererHelperTests(unittest.TestCase):
-    def test_hair_grab_swings_opposite_horizontal_drag(self):
-        self.assertLess(_grab_angle((150, 40), (300, 600), 500.0), 0.0)
-        self.assertGreater(_grab_angle((150, 40), (300, 600), -500.0), 0.0)
-
-    def test_grab_orientation_is_calculated_from_the_actual_point(self):
-        self.assertAlmostEqual(_grab_angle((150, 20), (300, 600), 0.0), 0.0)
-        self.assertAlmostEqual(abs(_grab_angle((150, 580), (300, 600), 0.0)), 180.0)
-        self.assertLess(_grab_angle((20, 300), (300, 600), 0.0), -80.0)
-        self.assertGreater(_grab_angle((280, 300), (300, 600), 0.0), 80.0)
-
     def test_rotated_quad_keeps_its_center(self):
         corners = _rotated_quad(10, 20, 100, 200, 37.0)
         center_x = sum(point[0] for point in corners) / 4

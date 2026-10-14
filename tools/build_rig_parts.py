@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw
 
 
 SIZE = (446, 910)
@@ -21,6 +21,7 @@ BODY_SWING_PATHS = {
     "right": "item_00122_pathitem_unnamed.png",
 }
 PIVOTS = {
+    "body": (223.0, 594.0),
     "arm_left": (80.0, 594.0),
     "arm_right": (366.0, 594.0),
     "foot_left": (65.0, 867.0),
@@ -147,7 +148,9 @@ class PartBuilder:
         # Illustrator's pageItems collection is front-to-back for these body
         # shapes; preserve their observed export order for the static torso.
         torso = compose(torso_objects)
-        self.save_part("body", torso, role="torso", z=20)
+        self.save_part(
+            "body", torso, PIVOTS["body"], role="torso", max_angle=1.4, z=20
+        )
         for side, image in side_panels.items():
             self.save_part(
                 f"upper_arm_{side}", image, PIVOTS[f"arm_{side}"],
@@ -225,21 +228,6 @@ class PartBuilder:
                 f"ear_anchor_{side}", patch, role="ear_anchor", side=side, z=38,
             )
 
-            led_alpha = led.getchannel("A")
-            wide_halo = led_alpha.filter(ImageFilter.GaussianBlur(14.0)).point(
-                lambda value: round(value * 0.44)
-            )
-            near_halo = led_alpha.filter(ImageFilter.GaussianBlur(6.0)).point(
-                lambda value: round(value * 0.52)
-            )
-            alpha = ImageChops.add(wide_halo, near_halo)
-            glow = Image.new("RGBA", SIZE, (255, 248, 166, 0))
-            glow.putalpha(alpha)
-            self.save_part(
-                f"ear_glow_{side}", glow, pivot, role="ear_glow", side=side,
-                max_angle=3.5, z=36,
-            )
-
     @staticmethod
     def hair_pivot(image: Image.Image, side: str) -> tuple[float, float]:
         bounds = image.getchannel("A").getbbox()
@@ -308,7 +296,14 @@ class PartBuilder:
         for z, layer_name, key in (
             (40, "Faces", "faces"), (50, "Frame", "frame"),
         ):
-            self.save_part(key, load_aligned(self.rig_dir / "layers" / layer_files[layer_name]), role="static", z=z)
+            self.save_part(
+                key,
+                load_aligned(self.rig_dir / "layers" / layer_files[layer_name]),
+                (223.0, 543.0),
+                role="head",
+                max_angle=1.2,
+                z=z,
+            )
 
         order = [
             *[name for name in self.parts if self.parts[name]["role"] == "foot"],
@@ -317,7 +312,6 @@ class PartBuilder:
             "bottom_hair_static",
             *bottom_hair,
             "ear_left", "ear_right",
-            "ear_glow_left", "ear_glow_right",
             "ear_led_left", "ear_led_right",
             "ear_anchor_left", "ear_anchor_right",
             "faces", "frame",
@@ -335,8 +329,8 @@ class PartBuilder:
                 "tracking_enabled_only_when_unmasked_export_is_verified": True,
             },
             "physics": {
-                "description": "Per-part damped angular lag follows horizontal motion.",
-                "max_speed_px_s": 300.0,
+                "description": "Damped angular and positional lag follows two-dimensional motion.",
+                "max_speed_px_s": 450.0,
             },
         }
         (self.output_dir / "manifest.json").write_text(

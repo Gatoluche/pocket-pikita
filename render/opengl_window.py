@@ -77,7 +77,6 @@ HTCLIENT = 1
 HTTRANSPARENT = -1
 CURSOR_NOTICE_DISTANCE = 520
 CURSOR_IDLE_SCAN_DWELL = 1.0
-CURSOR_LED_PULSE_DURATION = 0.4
 CURSOR_TRACKABLE_EXPRESSIONS = (
     Expression.BASE,
     Expression.ANGRY,
@@ -92,9 +91,10 @@ OVERLAY_FRAME_MARGIN = 32
 TOSS_MIN_SPEED = 140.0
 TOSS_MAX_SPEED = 1500.0
 TOSS_STOP_SPEED = 55.0
-TOSS_AIR_DRAG = 0.08
+TOSS_GRAVITY = 900.0
+TOSS_AIR_DRAG = 0.48
 TOSS_RESTITUTION = 0.24
-TOSS_TANGENT_DAMPING = 0.72
+TOSS_TANGENT_DAMPING = 0.68
 
 
 def _normalize(name: str) -> str:
@@ -140,27 +140,6 @@ def _walk_offset(walking: bool, seconds: float, strength: float = 1.0) -> tuple[
 def _walk_speed_scale(seconds: float) -> float:
     """Keep the travel speed smooth instead of pulsing with app uptime."""
     return 1.0
-
-
-def _grab_angle(grab: tuple[int, int], size: tuple[int, int], velocity_x: float) -> float:
-    """Hang the sprite from its actual grab point, then add a little momentum."""
-    x, y = grab
-    width, height = size
-    from_grab_x, from_grab_y = width / 2 - x, height / 2 - y
-    distance = math.hypot(from_grab_x, from_grab_y)
-    if distance < 1.0:
-        return 0.0
-    # Rotate the center of mass directly beneath the held pixel. A hair grab
-    # stays upright, a foot grab inverts him, and side grabs lean naturally.
-    hanging = math.degrees(math.atan2(-from_grab_x, from_grab_y))
-    leverage = min(1.0, distance / math.hypot(width / 2, height / 2))
-    swing = max(-34.0, min(34.0, -velocity_x * 0.045)) * max(0.35, leverage)
-    return hanging + swing
-
-
-def _nearest_equivalent_angle(angle: float, reference: float) -> float:
-    """Keep a 180 degree target on the nearest side of the current rotation."""
-    return angle + 360.0 * round((reference - angle) / 360.0)
 
 
 def _fixed_overlay_canvas_size(sprite_width: int, sprite_height: int) -> int:
@@ -403,7 +382,6 @@ class OpenGLWindow(Renderer):
         self._left_origin: tuple[int, int] | None = None
         self._left_max_move = 0.0
         self._left_drag: tuple[int, int, int, int] | None = None
-        self._left_grab = (self._width // 2, self._height // 3)
         self._left_grab_ratio = (0.5, 1 / 3)
         self._drag_cursor: tuple[int, int] | None = None
         self._drag_release_pending = False
@@ -411,7 +389,7 @@ class OpenGLWindow(Renderer):
         self._drag_last_cursor: tuple[int, int] | None = None
         self._drag_last_time = time.monotonic()
         self._drag_release_pause_until = self._drag_last_time
-        self._drag_velocity_x = 0.0
+        self._drag_acceleration = (0.0, 0.0)
         self._drag_throw_velocity = (0.0, 0.0)
         self._toss_velocity = (0.0, 0.0)
         self._toss_position: tuple[float, float] | None = None
@@ -421,7 +399,6 @@ class OpenGLWindow(Renderer):
         self._impact_strength = 0.0
         self._recent_impact_sounds: list[tuple[pygame.mixer.Sound, pygame.mixer.Channel]] = []
         self._drag_angle = 0.0
-        self._drag_target_angle = 0.0
         self._drag_angular_velocity = 0.0
         self._drag_physics_time = self._drag_last_time
         self._right_origin: tuple[int, int] | None = None
@@ -659,14 +636,30 @@ class OpenGLWindow(Renderer):
             return source
         now = time.monotonic()
         if self._left_drag is not None:
-            motion_velocity_x = self._drag_velocity_x
+            motion_velocity = self._drag_throw_velocity
         elif self._toss_active:
-            motion_velocity_x = self._toss_velocity[0]
+            motion_velocity = self._toss_velocity
+        elif self._is_jumping():
+            progress = self._jump_progress(now)
+            eased_speed = 6.0 * progress * (1.0 - progress) / JUMP_DURATION
+            arc_speed = 72.0 * math.pi * math.cos(math.pi * progress) / JUMP_DURATION
+            origin_x, origin_y = self._jump_origin
+            target_x, target_y = self._jump_target
+            motion_velocity = (
+                (target_x - origin_x) * eased_speed,
+                (target_y - origin_y) * eased_speed - arc_speed,
+            )
         elif self._is_walking():
-            roam_x = self._roam_velocity[0]
-            motion_velocity_x = roam_x if abs(roam_x) > 1.0 else roam_x * 220.0
+            if self._snack_target is not None:
+                scale = 220.0 if math.hypot(*self._roam_velocity) <= 1.5 else 1.0
+            else:
+                scale = self._walk_strength(now)
+            motion_velocity = (
+                self._roam_velocity[0] * scale,
+                self._roam_velocity[1] * scale,
+            )
         else:
-            motion_velocity_x = 0.0
+            motion_velocity = (0.0, 0.0)
         idle_fidget_progress = intent.idle_fidget_progress
         if (
             self._left_drag is not None
@@ -685,11 +678,10 @@ class OpenGLWindow(Renderer):
             gaze_y=intent.gaze_y if self._can_track_eyes(intent) else 0.0,
             ear_flick_left=intent.ear_flick_left,
             ear_flick_right=intent.ear_flick_right,
-            ear_led_pulse=intent.ear_led_pulse,
             startle_progress=intent.startle_progress,
             idle_fidget_progress=idle_fidget_progress,
             idle_fidget_side=intent.idle_fidget_side,
-            motion_velocity_x=motion_velocity_x,
+            motion_velocity=motion_velocity,
             walk_seconds=max(0.0, now - self._walk_started),
         )
 
@@ -1119,7 +1111,6 @@ class OpenGLWindow(Renderer):
             self._left_drag = None
             self._drag_cursor = None
             self._drag_release_pending = True
-            self._drag_target_angle = 0.0
             return poked
         if button == 3 and self._right_origin is not None:
             self._right_origin = None
@@ -1148,7 +1139,7 @@ class OpenGLWindow(Renderer):
         now = time.monotonic()
         self._drag_last_time = now
         self._drag_physics_time = now
-        self._drag_velocity_x = 0.0
+        self._drag_acceleration = (0.0, 0.0)
         self._drag_throw_velocity = (0.0, 0.0)
         self._toss_velocity = (0.0, 0.0)
         self._toss_position = None
@@ -1186,11 +1177,19 @@ class OpenGLWindow(Renderer):
             velocity_x = (cursor_x - self._drag_last_cursor[0]) / elapsed
             velocity_y = (cursor_y - self._drag_last_cursor[1]) / elapsed
             smoothing = 1.0 - math.exp(-elapsed * 18.0)
-            self._drag_velocity_x += (velocity_x - self._drag_velocity_x) * smoothing
             throw_x, throw_y = self._drag_throw_velocity
+            previous_throw = (throw_x, throw_y)
             self._drag_throw_velocity = (
                 throw_x + (velocity_x - throw_x) * smoothing,
                 throw_y + (velocity_y - throw_y) * smoothing,
+            )
+            acceleration_x = (self._drag_throw_velocity[0] - previous_throw[0]) / elapsed
+            acceleration_y = (self._drag_throw_velocity[1] - previous_throw[1]) / elapsed
+            acceleration_smoothing = 1.0 - math.exp(-elapsed * 12.0)
+            old_acceleration_x, old_acceleration_y = self._drag_acceleration
+            self._drag_acceleration = (
+                old_acceleration_x + (acceleration_x - old_acceleration_x) * acceleration_smoothing,
+                old_acceleration_y + (acceleration_y - old_acceleration_y) * acceleration_smoothing,
             )
         self._drag_last_cursor = (cursor_x, cursor_y)
         self._drag_cursor = (cursor_x, cursor_y)
@@ -1526,6 +1525,57 @@ class OpenGLWindow(Renderer):
             None,
         )
 
+    @staticmethod
+    def _center_in_display_union(
+        point: tuple[float, float],
+        half_width: float,
+        half_height: float,
+        monitors: list[_Rect],
+    ) -> bool:
+        """Allow seam crossings while keeping the visible sprite inside outer edges."""
+        x, y = point
+        for monitor in monitors:
+            width = max(0, monitor.right - monitor.left)
+            height = max(0, monitor.bottom - monitor.top)
+            if not (
+                monitor.left - 2 <= x <= monitor.right + 2
+                and monitor.top - 2 <= y <= monitor.bottom + 2
+            ):
+                continue
+
+            connected_left = any(
+                abs(other.right - monitor.left) <= 2
+                and other.top - 2 <= y <= other.bottom + 2
+                for other in monitors if other is not monitor
+            )
+            connected_right = any(
+                abs(other.left - monitor.right) <= 2
+                and other.top - 2 <= y <= other.bottom + 2
+                for other in monitors if other is not monitor
+            )
+            connected_top = any(
+                abs(other.bottom - monitor.top) <= 2
+                and other.left - 2 <= x <= other.right + 2
+                for other in monitors if other is not monitor
+            )
+            connected_bottom = any(
+                abs(other.top - monitor.bottom) <= 2
+                and other.left - 2 <= x <= other.right + 2
+                for other in monitors if other is not monitor
+            )
+            margin_x = min(half_width, width / 2)
+            margin_y = min(half_height, height / 2)
+            if not connected_left and x < monitor.left + margin_x:
+                continue
+            if not connected_right and x > monitor.right - margin_x:
+                continue
+            if not connected_top and y < monitor.top + margin_y:
+                continue
+            if not connected_bottom and y > monitor.bottom - margin_y:
+                continue
+            return True
+        return False
+
     def _track_cursor_with_eyes(self, intent: PetIntent) -> PetIntent:
         now = time.monotonic()
         dt = max(0.0, min(0.1, now - self._eye_tracking_time))
@@ -1551,7 +1601,6 @@ class OpenGLWindow(Renderer):
         )
 
         targets: list[EyeTarget] = []
-        cursor_attention = 0.0
         monitors = self._monitor_rects()
         monitor = self._monitor_containing_point(eye_position, monitors)
         if monitor is not None and self._can_track_eyes(intent):
@@ -1571,12 +1620,6 @@ class OpenGLWindow(Renderer):
                     cursor_position, monitors
                 )
                 if cursor_monitor is monitor:
-                    cursor_attention = max(
-                        0.0,
-                        1.0
-                        - (now - self._cursor_last_moved)
-                        / CURSOR_LED_PULSE_DURATION,
-                    )
                     idle_scan = bool(intent.gaze_x or intent.gaze_y)
                     cursor_parked = now - self._cursor_last_moved >= CURSOR_IDLE_SCAN_DWELL
                     if not (idle_scan and cursor_parked):
@@ -1600,7 +1643,6 @@ class OpenGLWindow(Renderer):
             intent,
             gaze_x=gaze_x,
             gaze_y=gaze_y,
-            ear_led_pulse=max(intent.ear_led_pulse, cursor_attention),
         )
 
     def _try_begin_screen_jump(
@@ -1675,76 +1717,65 @@ class OpenGLWindow(Renderer):
         window = _Rect()
         self._user.GetWindowRect(self._hwnd, ctypes.byref(window))
         sprite_left, sprite_top, sprite_width, sprite_height = self._last_sprite_rect
-        visible = _Rect(
-            round(window.left + sprite_left),
-            round(window.top + sprite_top),
-            round(window.left + sprite_left + sprite_width),
-            round(window.top + sprite_top + sprite_height),
-        )
         monitors = self._monitor_rects()
-        monitor = self._monitor_for_window(visible, monitors)
-        if monitor is None and monitors:
-            center_x = (visible.left + visible.right) / 2
-            center_y = (visible.top + visible.bottom) / 2
-
-            def distance_to_monitor(candidate: _Rect) -> float:
-                dx = max(candidate.left - center_x, 0.0, center_x - candidate.right)
-                dy = max(candidate.top - center_y, 0.0, center_y - candidate.bottom)
-                return dx * dx + dy * dy
-
-            monitor = min(monitors, key=distance_to_monitor)
-        if monitor is None:
+        if not monitors:
             self._toss_active = False
             self._toss_velocity = (0.0, 0.0)
             self._toss_position = None
             return
 
-        minimum_x = float(monitor.left - sprite_left)
-        maximum_x = float(monitor.right - sprite_left - sprite_width)
-        minimum_y = float(monitor.top - sprite_top)
-        maximum_y = float(monitor.bottom - sprite_top - sprite_height)
-        if maximum_x < minimum_x:
-            minimum_x = maximum_x = (
-                monitor.left
-                + (monitor.right - monitor.left - sprite_width) / 2
-                - sprite_left
-            )
-        if maximum_y < minimum_y:
-            minimum_y = maximum_y = (
-                monitor.top
-                + (monitor.bottom - monitor.top - sprite_height) / 2
-                - sprite_top
-            )
-
         position_x, position_y = self._toss_position or (
             float(window.left), float(window.top)
         )
         velocity_x, velocity_y = self._toss_velocity
-        next_x = position_x + velocity_x * dt
-        next_y = position_y + velocity_y * dt
+        radians = math.radians(self._drag_angle)
+        half_width = (
+            abs(sprite_width * math.cos(radians))
+            + abs(sprite_height * math.sin(radians))
+        ) / 2
+        half_height = (
+            abs(sprite_width * math.sin(radians))
+            + abs(sprite_height * math.cos(radians))
+        ) / 2
+
+        def supported(left: float, top: float) -> bool:
+            return self._center_in_display_union(
+                (
+                    left + sprite_left + sprite_width / 2,
+                    top + sprite_top + sprite_height / 2,
+                ),
+                half_width,
+                half_height,
+                monitors,
+            )
+
         impact_x = impact_y = 0.0
+        max_speed = max(abs(velocity_x), abs(velocity_y) + TOSS_GRAVITY * dt)
+        steps = max(1, math.ceil(max_speed * dt / 8.0))
+        step_dt = dt / steps
+        for _ in range(steps):
+            velocity_y += TOSS_GRAVITY * step_dt
+            proposed_x = position_x + velocity_x * step_dt
+            proposed_y = position_y + velocity_y * step_dt
+            if supported(proposed_x, proposed_y):
+                position_x, position_y = proposed_x, proposed_y
+                continue
 
-        if next_x < minimum_x:
-            next_x = minimum_x
-            impact_x = abs(velocity_x)
-            velocity_x = -velocity_x * TOSS_RESTITUTION
-            velocity_y *= TOSS_TANGENT_DAMPING
-        elif next_x > maximum_x:
-            next_x = maximum_x
-            impact_x = abs(velocity_x)
-            velocity_x = -velocity_x * TOSS_RESTITUTION
-            velocity_y *= TOSS_TANGENT_DAMPING
+            # Check each axis separately so an outer wall only reverses the
+            # velocity aimed into it. A neighboring monitor keeps that axis open.
+            if supported(proposed_x, position_y):
+                position_x = proposed_x
+            elif abs(velocity_x) > 0.5:
+                impact_x = max(impact_x, abs(velocity_x))
+                velocity_x = -velocity_x * TOSS_RESTITUTION
+                velocity_y *= TOSS_TANGENT_DAMPING
 
-        if next_y < minimum_y:
-            next_y = minimum_y
-            impact_y = abs(velocity_y)
-            velocity_y = -velocity_y * TOSS_RESTITUTION
-            velocity_x *= TOSS_TANGENT_DAMPING
-        elif next_y > maximum_y:
-            next_y = maximum_y
-            impact_y = abs(velocity_y)
-            velocity_y = -velocity_y * TOSS_RESTITUTION
-            velocity_x *= TOSS_TANGENT_DAMPING
+            if supported(position_x, proposed_y):
+                position_y = proposed_y
+            elif abs(velocity_y) > 0.5:
+                impact_y = max(impact_y, abs(velocity_y))
+                velocity_y = -velocity_y * TOSS_RESTITUTION
+                velocity_x *= TOSS_TANGENT_DAMPING
 
         impact_speed = math.hypot(impact_x, impact_y)
         if impact_speed > 35.0:
@@ -1768,18 +1799,22 @@ class OpenGLWindow(Renderer):
         velocity_x *= drag
         velocity_y *= drag
         self._toss_velocity = (velocity_x, velocity_y)
-        self._toss_position = (next_x, next_y)
+        self._toss_position = (position_x, position_y)
         self._user.SetWindowPos(
             self._hwnd,
             0,
-            round(next_x),
-            round(next_y),
+            round(position_x),
+            round(position_y),
             0,
             0,
             0x1 | 0x4,
         )
 
-        if math.hypot(velocity_x, velocity_y) < TOSS_STOP_SPEED:
+        wall_contact = any(
+            not supported(position_x + dx, position_y + dy)
+            for dx, dy in ((2.0, 0.0), (-2.0, 0.0), (0.0, 2.0), (0.0, -2.0))
+        )
+        if wall_contact and math.hypot(velocity_x, velocity_y) < TOSS_STOP_SPEED:
             self._toss_active = False
             self._toss_velocity = (0.0, 0.0)
             self._toss_position = None
@@ -1792,23 +1827,35 @@ class OpenGLWindow(Renderer):
         dt = min(now - self._drag_physics_time, 0.05)
         self._drag_physics_time = now
         if self._left_drag is not None:
-            self._drag_velocity_x *= math.exp(-dt * 9.0)
+            self._drag_acceleration = tuple(
+                component * math.exp(-dt * 8.0)
+                for component in self._drag_acceleration
+            )
             size = (
                 (self._overlay_sprite_width, self._overlay_sprite_height)
                 if self._desktop_transparent else (self._width, self._height)
             )
-            self._left_grab = (
-                round(self._left_grab_ratio[0] * size[0]),
-                round(self._left_grab_ratio[1] * size[1]),
-            )
-            self._drag_target_angle = _nearest_equivalent_angle(
-                _grab_angle(self._left_grab, size, self._drag_velocity_x),
-                self._drag_angle,
-            )
-            stiffness, damping = 72.0, 17.0
+            anchor_x = self._left_grab_ratio[0] * size[0]
+            anchor_y = self._left_grab_ratio[1] * size[1]
+            lever_x, lever_y = size[0] / 2 - anchor_x, size[1] / 2 - anchor_y
+            radians = math.radians(self._drag_angle)
+            rotated_x = lever_x * math.cos(radians) + lever_y * math.sin(radians)
+            rotated_y = -lever_x * math.sin(radians) + lever_y * math.cos(radians)
+            acceleration_x, acceleration_y = self._drag_acceleration
+            acceleration_length = math.hypot(acceleration_x, acceleration_y)
+            if acceleration_length > 3600.0:
+                factor = 3600.0 / acceleration_length
+                acceleration_x *= factor
+                acceleration_y *= factor
+            # The cursor's acceleration pushes the anchored body the other way.
+            force_x, force_y = -acceleration_x, -acceleration_y
+            moment = max((size[0] ** 2 + size[1] ** 2) / 12.0, 1.0)
+            torque = rotated_y * force_x - rotated_x * force_y
+            angular_acceleration = math.degrees(torque / moment) * 0.65
             acceleration = (
-                (self._drag_target_angle - self._drag_angle) * stiffness
-                - self._drag_angular_velocity * damping
+                angular_acceleration
+                - self._drag_angle * 15.0
+                - self._drag_angular_velocity * 8.5
             )
         else:
             stiffness, damping = 28.0, 10.5
@@ -1816,6 +1863,10 @@ class OpenGLWindow(Renderer):
         self._drag_angular_velocity += acceleration * dt
         self._drag_angular_velocity = max(-720.0, min(720.0, self._drag_angular_velocity))
         self._drag_angle += self._drag_angular_velocity * dt
+        if self._left_drag is not None and abs(self._drag_angle) > 55.0:
+            self._drag_angle = math.copysign(55.0, self._drag_angle)
+            if self._drag_angular_velocity * self._drag_angle > 0.0:
+                self._drag_angular_velocity = 0.0
         if (
             abs(self._drag_angle) < DRAG_REST_ANGLE
             and abs(self._drag_angular_velocity) < DRAG_REST_SPEED

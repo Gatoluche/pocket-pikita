@@ -55,8 +55,6 @@ class IllustratorRig:
         self._top_hair_base = self._layers["Top Hair"]
         self._top_hair_parts: dict[str, _Part] = {}
         self._load_top_hair_parts(rig_dir)
-        self._ear_led_highlights: dict[str, _Part] = {}
-        self._load_ear_leds(rig_dir)
 
         self._face_mask = self._make_face_mask(self._layers["Faces"])
         self._extend_face_mask_over_cheeks(self._face_mask)
@@ -249,61 +247,6 @@ class IllustratorRig:
             for name, surface in surfaces.items()
         }
 
-    def _load_ear_leds(self, rig_dir: Path) -> None:
-        sublayers_dir = rig_dir / "sublayers"
-        manifest_path = sublayers_dir / "manifest.json"
-        if not manifest_path.is_file():
-            return
-        try:
-            sublayers_manifest = json.loads(
-                manifest_path.read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError):
-            return
-
-        entries = [
-            entry
-            for entry in sublayers_manifest.get("object_exports", [])
-            if entry.get("layer_path") == ["Ear", "Ears"]
-            and entry.get("item_name") == "LED"
-        ]
-        if len(entries) != 2:
-            return
-
-        highlights: dict[str, _Part] = {}
-        for entry in entries:
-            filename = entry.get("file")
-            if not isinstance(filename, str):
-                return
-            path = sublayers_dir / filename
-            if not path.is_file():
-                return
-            try:
-                surface = pygame.image.load(str(path)).convert_alpha()
-            except pygame.error:
-                return
-            if surface.get_size() != (self._width, self._height):
-                return
-
-            bounds = surface.get_bounding_rect(min_alpha=1)
-            side = "left" if bounds.centerx < self._width / 2 else "right"
-            if bounds.width == 0 or bounds.height == 0 or side in highlights:
-                return
-
-            pixels = bytearray(pygame.image.tostring(surface, "RGBA", False))
-            for offset in range(0, len(pixels), 4):
-                if pixels[offset + 3]:
-                    # Tint the pulse amber so it stays visible against white.
-                    pixels[offset : offset + 3] = b"\xff\x80\x00"
-            highlight = pygame.image.frombuffer(
-                bytes(pixels), surface.get_size(), "RGBA"
-            ).copy()
-            pivot = tuple(self._pivots["Ear"][side])
-            highlights[side] = self._make_canvas_part(highlight, pivot)
-
-        if set(highlights) == {"left", "right"}:
-            self._ear_led_highlights = highlights
-
     def _face_for(self, expression_surface: pygame.Surface) -> pygame.Surface:
         key = id(expression_surface)
         face = self._masked_faces.get(key)
@@ -369,16 +312,9 @@ class IllustratorRig:
         part: _Part,
         angle: float,
         offset: tuple[float, float] = (0.0, 0.0),
-        opacity: int = 255,
     ) -> None:
-        opacity = max(0, min(255, opacity))
-        if opacity == 0:
-            return
         image = part.image
         if abs(angle) < 0.05:
-            if opacity < 255:
-                image = image.copy()
-                image.set_alpha(opacity)
             canvas.blit(
                 image,
                 (
@@ -392,8 +328,6 @@ class IllustratorRig:
         # visibly stepped edges. rotozoom() keeps the same angle and scale
         # while filtering the transformed pixels.
         rotated = pygame.transform.rotozoom(image, angle, 1.0)
-        if opacity < 255:
-            rotated.set_alpha(opacity)
         radians = math.radians(angle)
         cosine, sine = math.cos(radians), math.sin(radians)
         center_x, center_y = image.get_width() / 2, image.get_height() / 2
@@ -428,11 +362,10 @@ class IllustratorRig:
         gaze_y: float = 0.0,
         ear_flick_left: float = 0.0,
         ear_flick_right: float = 0.0,
-        ear_led_pulse: float = 0.0,
         startle_progress: float | None = None,
         idle_fidget_progress: float | None = None,
         idle_fidget_side: str = "left",
-        motion_velocity_x: float = 0.0,
+        motion_velocity: tuple[float, float] = (0.0, 0.0),
         walk_seconds: float | None = None,
     ) -> pygame.Surface:
         """Return one assembled frame while preserving the selected PNG face."""
@@ -447,11 +380,10 @@ class IllustratorRig:
                 gaze_y=gaze_y,
                 ear_flick_left=ear_flick_left,
                 ear_flick_right=ear_flick_right,
-                ear_led_pulse=ear_led_pulse,
                 startle_progress=startle_progress,
                 idle_fidget_progress=idle_fidget_progress,
                 idle_fidget_side=idle_fidget_side,
-                motion_velocity_x=motion_velocity_x,
+                motion_velocity=motion_velocity,
                 walk_seconds=walk_seconds,
             )
         canvas = pygame.Surface(
@@ -468,7 +400,6 @@ class IllustratorRig:
             if startle_progress is not None
             else {}
         )
-        ear_led_pulse = max(ear_led_pulse, startle.get("ear_led_pulse", 0.0))
         fidget = (
             IDLE_FIDGET_CLIP.sample(
                 max(0.0, min(1.0, idle_fidget_progress))
@@ -497,7 +428,7 @@ class IllustratorRig:
             + idle_motion["feet_right"] * idle
             + fidget.get("feet_right", 0.0)
         )
-        walk_direction = -1.0 if motion_velocity_x < 0.0 else 1.0
+        walk_direction = -1.0 if motion_velocity[0] < 0.0 else 1.0
         walk_stride_left = (
             walk_motion.get("foot_stride_left", 0.0) * walk_direction * strength
         )
@@ -544,15 +475,6 @@ class IllustratorRig:
             ear_right += 3.0
         self._draw_rotated(canvas, self._parts["Ear"]["left"], ear_left)
         self._draw_rotated(canvas, self._parts["Ear"]["right"], ear_right)
-        led_opacity = round(120 * max(0.0, min(1.0, ear_led_pulse)))
-        if led_opacity:
-            for side, angle in (("left", ear_left), ("right", ear_right)):
-                led = self._ear_led_highlights.get(side)
-                if led is not None:
-                    self._draw_rotated(
-                        canvas, led, angle, opacity=led_opacity
-                    )
-
         canvas.blit(self._layers["Faces"], (0, 0))
         canvas.blit(self._layers["Frame"], (0, 0))
         face = (
