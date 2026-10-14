@@ -252,6 +252,7 @@ class IndependentPartRig:
             if startle_progress is not None
             else {}
         )
+        ear_led_pulse = max(ear_led_pulse, startle.get("ear_led_pulse", 0.0))
         strength = max(0.0, min(1.0, walk_strength)) if walking else 0.0
         ear_angles: dict[str, float] = {}
         for side, flick in (

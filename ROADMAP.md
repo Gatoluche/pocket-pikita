@@ -27,6 +27,7 @@
 
 - A click still gets a short expression and squeak response, with a quick
   authored recoil through the separate ears, arms, and hair before he settles.
+- His ear LEDs flash with the recoil, then fade back to their normal color.
 
 ## Later: authored animation and attention
 

@@ -160,6 +160,11 @@ POKE_REACTION_CLIP = AnimationClip(
             Keyframe(0.19, 0.35, "ease_out"), Keyframe(0.34, -0.1),
             Keyframe(0.48, 0.0, "ease_in"),
         ),
+        "ear_led_pulse": (
+            Keyframe(0.0, 0.0), Keyframe(0.04, 1.0, "ease_out"),
+            Keyframe(0.15, 0.55), Keyframe(0.32, 0.08, "ease_in"),
+            Keyframe(0.48, 0.0, "ease_in"),
+        ),
     },
 )
 

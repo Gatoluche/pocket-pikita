@@ -459,6 +459,7 @@ class IllustratorRig:
             if startle_progress is not None
             else {}
         )
+        ear_led_pulse = max(ear_led_pulse, startle.get("ear_led_pulse", 0.0))
 
         feet_left = walk_motion.get("feet_left", 0.0) * strength + idle_motion["feet_left"] * idle
         feet_right = walk_motion.get("feet_right", 0.0) * strength + idle_motion["feet_right"] * idle
