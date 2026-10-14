@@ -38,3 +38,10 @@ visible artwork objects. These object PNGs can split eye glints and hair blocks
 when they are separate Illustrator objects. Rerun the script in Illustrator
 to regenerate the exports and manifest; this cannot be done from the command
 line because Illustrator must rasterize the document.
+
+The runtime uses the three separated objects in `sublayers/objects/top_hair/`
+to sway the left, right, and front hair pieces independently. It removes the
+static copies from the full top-hair export before drawing the moving pieces,
+so the strands do not leave duplicate edges behind. If those object exports
+are missing or incomplete, the renderer falls back to the static top-hair
+layer.

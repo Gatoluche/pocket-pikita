@@ -19,6 +19,15 @@ class _Part:
     pivot: tuple[float, float]
 
 
+# These are the roots of the separated Illustrator hair shapes, in the shared
+# 446x910 artboard coordinates.
+TOP_HAIR_PIVOTS = {
+    "left": (190.0, 238.0),
+    "right": (366.0, 278.0),
+    "front": (246.0, 192.0),
+}
+
+
 class IllustratorRig:
     """A small, software-composited rig for the separately exported layers."""
 
@@ -31,6 +40,9 @@ class IllustratorRig:
         for name, filename in manifest["layer_files"].items():
             path = rig_dir / "layers" / filename
             self._layers[name] = pygame.image.load(str(path)).convert_alpha()
+        self._top_hair_base = self._layers["Top Hair"]
+        self._top_hair_parts: dict[str, _Part] = {}
+        self._load_top_hair_parts(rig_dir)
 
         self._face_mask = self._make_face_mask(self._layers["Faces"])
         self._extend_face_mask_over_cheeks(self._face_mask)
@@ -103,6 +115,90 @@ class IllustratorRig:
         image = half.subsurface(bounds).copy()
         origin = (left + bounds.x, bounds.y)
         return _Part(image, origin, (float(pivot[0]), float(pivot[1])))
+
+    @staticmethod
+    def _make_canvas_part(
+        surface: pygame.Surface, pivot: tuple[float, float]
+    ) -> _Part:
+        bounds = surface.get_bounding_rect(min_alpha=1)
+        if bounds.width == 0 or bounds.height == 0:
+            raise ValueError("An extracted hair object is empty")
+        image = surface.subsurface(bounds).copy()
+        return _Part(image, (bounds.x, bounds.y), pivot)
+
+    def _load_top_hair_parts(self, rig_dir: Path) -> None:
+        sublayers_dir = rig_dir / "sublayers"
+        manifest_path = sublayers_dir / "manifest.json"
+        composite_path = sublayers_dir / "top_hair.png"
+        if not manifest_path.is_file() or not composite_path.is_file():
+            return
+
+        try:
+            sublayers_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return
+        entries = [
+            entry
+            for entry in sublayers_manifest.get("object_exports", [])
+            if entry.get("layer_path") == ["Top Hair"]
+            and entry.get("item_type") in ("PathItem", "CompoundPathItem")
+        ]
+        if len(entries) != len(TOP_HAIR_PIVOTS):
+            return
+
+        composite = pygame.image.load(str(composite_path)).convert_alpha()
+        expected_size = (self._width, self._height)
+        if composite.get_size() != expected_size:
+            return
+
+        surfaces: dict[str, pygame.Surface] = {}
+        for entry in entries:
+            filename = entry.get("file")
+            if not isinstance(filename, str):
+                return
+            path = sublayers_dir / filename
+            if not path.is_file():
+                return
+            try:
+                surface = pygame.image.load(str(path)).convert_alpha()
+            except pygame.error:
+                return
+            if surface.get_size() != expected_size:
+                return
+            bounds = surface.get_bounding_rect(min_alpha=1)
+            center_x = bounds.centerx
+            if center_x < 190:
+                part_name = "left"
+            elif center_x > 310:
+                part_name = "right"
+            else:
+                part_name = "front"
+            if part_name in surfaces or bounds.width == 0 or bounds.height == 0:
+                return
+            surfaces[part_name] = surface
+
+        if set(surfaces) != set(TOP_HAIR_PIVOTS):
+            return
+
+        # Remove the extracted shapes from the static layer so their animated
+        # copies never leave a doubled edge behind.
+        pixels = bytearray(pygame.image.tostring(composite, "RGBA", False))
+        masks = [
+            pygame.image.tostring(surfaces[name], "RGBA", False)
+            for name in ("left", "right", "front")
+        ]
+        for offset in range(3, len(pixels), 4):
+            if any(mask[offset] for mask in masks):
+                pixels[offset] = 0
+        self._top_hair_base = pygame.image.frombuffer(
+            bytes(pixels), expected_size, "RGBA"
+        ).copy()
+        self._top_hair_parts = {
+            name: self._make_canvas_part(surface, TOP_HAIR_PIVOTS[name])
+            for name, surface in surfaces.items()
+        }
 
     def _face_for(self, expression_surface: pygame.Surface) -> pygame.Surface:
         key = id(expression_surface)
@@ -238,6 +334,10 @@ class IllustratorRig:
         self._draw_rotated(canvas, self._parts["Arms"]["left"], arm_left)
         self._draw_rotated(canvas, self._parts["Arms"]["right"], arm_right)
 
-        canvas.blit(self._layers["Top Hair"], (0, 0))
+        canvas.blit(self._top_hair_base, (0, 0))
+        for side in ("left", "right", "front"):
+            part = self._top_hair_parts.get(side)
+            if part is not None:
+                self._draw_rotated(canvas, part, idle_motion[f"hair_{side}"])
 
         return canvas

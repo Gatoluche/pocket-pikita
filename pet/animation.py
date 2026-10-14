@@ -86,6 +86,18 @@ IDLE_CLIP = AnimationClip(
             Keyframe(0.0, 0.32), Keyframe(2.0, -0.32), Keyframe(4.0, 0.32),
             Keyframe(6.0, -0.32), Keyframe(8.0, 0.32),
         ),
+        "hair_left": (
+            Keyframe(0.0, 0.0), Keyframe(2.0, 1.1), Keyframe(4.0, 0.0),
+            Keyframe(6.0, -1.1), Keyframe(8.0, 0.0),
+        ),
+        "hair_right": (
+            Keyframe(0.0, 0.0), Keyframe(2.0, -1.3), Keyframe(4.0, 0.0),
+            Keyframe(6.0, 1.3), Keyframe(8.0, 0.0),
+        ),
+        "hair_front": (
+            Keyframe(0.0, 0.0), Keyframe(2.0, 0.7), Keyframe(4.0, 0.0),
+            Keyframe(6.0, -0.7), Keyframe(8.0, 0.0),
+        ),
     },
     loop=True,
 )
