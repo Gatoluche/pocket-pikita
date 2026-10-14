@@ -18,7 +18,9 @@ sprite. The selection is saved in the ignored `settings.json` file.
 4. To rebuild eye tracking, also run `python tools/build_eye_tracking_assets.py`.
 
 The Illustrator script exports a temporary copy of the artwork and closes it
-without saving. It keeps every PNG aligned to the artboard, writes masks as
+without saving. It unlocks that copy before isolating any layers or objects,
+including hidden locked sublayers, so Illustrator can change their visibility
+during export. It keeps every PNG aligned to the artboard, writes masks as
 white silhouettes, and exports pupil and glint artwork with clipped ancestor
 masks temporarily disabled. The source Illustrator document is unchanged.
 

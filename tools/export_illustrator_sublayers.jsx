@@ -128,7 +128,6 @@
     function unlockSourceArtwork() {
         for (var i = 0; i < allLayers.length; i++) {
             var layerRecord = allLayers[i];
-            if (!layerAndParentsWereVisible(layerRecord.layer)) continue;
             try {
                 if (layerRecord.layer.locked) layerRecord.layer.locked = false;
             } catch (error) {
@@ -137,7 +136,7 @@
             }
         }
         for (var j = 0; j < allPageItems.length; j++) {
-            if (allPageItems[j].sourceVisible) unlockItemAndParents(allPageItems[j].item);
+            unlockItemAndParents(allPageItems[j].item);
         }
     }
 
