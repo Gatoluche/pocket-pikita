@@ -269,6 +269,8 @@ class IndependentPartRig:
         for name in self._part_order:
             part = self.parts[name]
             role, side = part.role, part.side
+            foot_offset_x = 0.0
+            foot_offset_y = 0.0
             if role == "ear_glow":
                 intensity = max(0.0, min(1.0, ear_led_pulse))
                 if intensity <= 0:
@@ -291,6 +293,9 @@ class IndependentPartRig:
                 self._spring_angle(f"arm_{side}", part, 0.0, dt)
             elif role == "foot" and walking:
                 value = walk.get(f"feet_{side}", 0.0) * strength
+                direction = -1.0 if motion_velocity_x < 0.0 else 1.0
+                foot_offset_x = walk.get(f"foot_stride_{side}", 0.0) * direction
+                foot_offset_y = -walk.get(f"foot_lift_{side}", 0.0)
                 self._spring_angle(name, part, 0.0, dt)
             elif role == "ear":
                 value = ear_angles.get(side or "", 0.0)
@@ -325,6 +330,11 @@ class IndependentPartRig:
                 continue
 
             image, position = self._rotation(part.image, part.pivot, part.origin, value)
+            if role == "foot" and walking:
+                position = (
+                    position[0] + round(foot_offset_x * strength),
+                    position[1] + round(foot_offset_y * strength),
+                )
             canvas.blit(image, position)
 
         return canvas

@@ -133,6 +133,25 @@ WALK_CLIP = AnimationClip(
             Keyframe(0.0, 0.0), Keyframe(0.2, -2.2), Keyframe(0.4, 0.0),
             Keyframe(0.6, 2.2), Keyframe(0.8, 0.0),
         ),
+        # Pikita has floating feet rather than articulated lower legs. Each
+        # foot swings forward while lifted, then drifts slightly back as the
+        # opposite foot takes its turn.
+        "foot_stride_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, 6.0), Keyframe(0.4, 0.0),
+            Keyframe(0.6, -4.0), Keyframe(0.8, 0.0),
+        ),
+        "foot_stride_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, -4.0), Keyframe(0.4, 0.0),
+            Keyframe(0.6, 6.0), Keyframe(0.8, 0.0),
+        ),
+        "foot_lift_left": (
+            Keyframe(0.0, 0.0), Keyframe(0.2, 7.0), Keyframe(0.4, 0.0),
+            Keyframe(0.8, 0.0),
+        ),
+        "foot_lift_right": (
+            Keyframe(0.0, 0.0), Keyframe(0.4, 0.0), Keyframe(0.6, 7.0),
+            Keyframe(0.8, 0.0),
+        ),
         "arm_left": (
             Keyframe(0.0, 0.0), Keyframe(0.2, -0.9), Keyframe(0.4, 0.0),
             Keyframe(0.6, 0.9), Keyframe(0.8, 0.0),
